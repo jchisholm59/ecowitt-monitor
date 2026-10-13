@@ -24,6 +24,8 @@ own Home Assistant, switched with a button.
   quiet, a low sensor battery. Thresholds and on/off on the card, per station; the same alert at most every few hours.
   Sent to a Home Assistant webhook (phone, watch, a spoken announcement: see [`ha-automation.yaml`](ha-automation.yaml))
   and/or [ntfy](https://ntfy.sh).
+- **Home Assistant add-on**: on HA OS, add [`jchisholm59/ha-addons`](https://github.com/jchisholm59/ha-addons) to the
+  Add-on Store and install **Ecowitt Monitor**: a **Weather** panel in the sidebar, no token needed for HA's own station.
 - **Standalone**: the same card at `http://<this machine>:7120/`, no Home Assistant dashboard needed (it still reads
   the station through HA). `?station=cottage&tab=graphs&range=7d` opens it there.
 
