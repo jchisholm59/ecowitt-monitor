@@ -126,6 +126,11 @@ const STYLE = `
   .chart h4 .lg { font-weight: 400; font-size: .85em; color: var(--secondary-text-color); display: inline-flex; gap: 4px; align-items: center; }
   .chart h4 .lg i { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
   .chart svg { width: 100%; height: 170px; display: block; touch-action: pan-y; }
+  .chart.moon .mn { display: flex; gap: 16px; align-items: center; padding: 6px 0 8px; }
+  .chart.moon .mn svg { width: 150px; height: 150px; flex: none; }
+  .chart.moon .kv { flex: 1; margin-top: 0; }
+  .chart.moon .kv span, .chart.moon .kv b { white-space: nowrap; }
+  .chart.moon .mn svg { max-width: 40%; }
   .chart .tip { position: absolute; pointer-events: none; background: var(--card-background-color, #222); color: var(--primary-text-color); border: 1px solid var(--divider-color);
                 border-radius: 8px; padding: 6px 8px; font-size: .8em; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.3); display: none; z-index: 2; }
   .axis { fill: var(--secondary-text-color); font-size: 10px; }
@@ -502,10 +507,39 @@ class EcowittCard extends HTMLElement {
       defs.push({ title: "Lightning", unit: "strikes", d: 0, zero: true, bars, color: "#ffca28", summary: `${f0(bars.total)} strikes within 100 km` });
     }
     if (S.press) defs.push({ title: "Pressure", unit: "hPa", d: 1, lines: [{ name: "Sea level", color: "var(--ec-press)", y: S.press.mean }] });
-    box.innerHTML = `<div class="charts">${defs.map((c, i) => `<div class="chart" data-i="${i}"><h4>${esc(c.title)}
+    // The moon: % illuminated over the range (calculated here, no data needed), full and new moons marked.
+    const mt = Array.from({ length: 300 }, (_, i) => h.start + ((h.end - h.start) * i) / 299);
+    const marks = (h.range === "1y" ? [] : moonEvents(h.start, h.end)).map((e) => ({ t: e.t, label: e.full ? "🌕" : "🌑", name: e.full ? "Full moon" : "New moon" }));
+    defs.push({ title: "Moon", unit: "%", d: 0, fixed: [0, 100], t: mt, marks, lines: [{ name: "Illuminated", color: "#cfd8dc", y: mt.map((x) => Math.round(moonIllum(new Date(x)).fraction * 1000) / 10), fill: true }] });
+    const moonAt = defs.findIndex((c) => c.title === "Moon"); // the Moon panel goes just before its chart
+    box.innerHTML = `<div class="charts">${defs.map((c, i) => `${i === moonAt ? this._moonPanel() : ""}<div class="chart" data-i="${i}"><h4>${esc(c.title)}
         ${(c.lines || []).map((l) => `<span class="lg"><i style="background:${l.color}"></i>${esc(l.name)}</span>`).join("")}
         ${c.summary ? `<span class="lg">${esc(c.summary)}</span>` : ""}</h4><svg></svg><div class="tip"></div></div>`).join("")}</div>`;
-    defs.forEach((c, i) => this._chart(box.querySelector(`.chart[data-i="${i}"]`), c, c.bars ? c.bars.t : t, h));
+    defs.forEach((c, i) => this._chart(box.querySelector(`.chart[data-i="${i}"]`), c, c.bars ? c.bars.t : c.t || t, h));
+  }
+
+  // Tonight's moon at the station: the phase drawn, its name, % lit, age, moonrise and moonset, and the next new and
+  // full moons. All calculated here (SunCalc's formulas), from the station's Home Assistant home location.
+  _moonPanel() {
+    const now = new Date(), m = moonIllum(now), home = this._live?.home;
+    const name = moonPhaseName(m.phase), age = m.phase * 29.530588853;
+    const next = moonEvents(now.getTime(), now.getTime() + 32 * 864e5);
+    const nf = next.find((e) => e.full), nn = next.find((e) => !e.full);
+    const day = (t) => new Date(t).toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric" });
+    const tm = (d) => (d ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "–");
+    let rise = null, set = null;
+    if (home) {
+      const d0 = new Date(now);
+      d0.setHours(0, 0, 0, 0);
+      const mt = moonTimes(d0, home.lat, home.lon);
+      (rise = mt.rise), (set = mt.set);
+    }
+    return `<div class="chart moon"><h4>Moon <span class="lg">${home ? `at ${esc(this._live?.name || "")}` : ""}</span></h4>
+      <div class="mn">${moonSvg(m.phase, home ? home.lat : 45)}
+        <div class="kv"><span>Phase</span><b>${name}</b><span>Illuminated</span><b>${f0(m.fraction * 100)} %</b>
+          <span>Age</span><b>${f1(age)} days</b>
+          ${home ? `<span>Rises today</span><b>${tm(rise)}</b><span>Sets today</span><b>${tm(set)}</b>` : ""}
+          <span>🌕 Full</span><b>${nf ? day(nf.t) : "–"}</b><span>🌑 New</span><b>${nn ? day(nn.t) : "–"}</b></div></div></div>`;
   }
 
   // Rain as bars of a sensible size for the range: 30 min for 6 h, hourly for 24 h, 6-hourly for 7 d, daily for
@@ -568,6 +602,10 @@ class EcowittCard extends HTMLElement {
       const d = linePath(t, l.y, X, Y, h);
       if (l.fill) s += `<path d="${areaPath(t, l.y, X, Y, Y(Math.max(lo, 0)), h)}" fill="${l.color}" opacity=".2"/>`;
       s += `<path d="${d}" fill="none" stroke="${l.color}" stroke-width="${l.thin ? 1.2 : 2}" stroke-linejoin="round" stroke-linecap="round"/>`;
+    }
+    for (const m of c.marks || []) {
+      if (m.t < x0 || m.t > x1) continue;
+      s += `<line x1="${X(m.t)}" x2="${X(m.t)}" y1="${T + 14}" y2="${H - B}" stroke="var(--secondary-text-color)" stroke-opacity=".5" stroke-dasharray="2 2"/><text x="${X(m.t)}" y="${T + 11}" text-anchor="middle" style="font-size:12px">${m.label}</text>`;
     }
     s += `<line class="cross" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--primary-text-color)" stroke-opacity=".5" style="display:none"/>`;
     svg.innerHTML = s;
@@ -875,6 +913,111 @@ class Radar {
       when.textContent = `${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · ${mins} min ago`;
     }
   }
+}
+
+// ---- the moon ---------------------------------------------------------------------------------------------------
+// From SunCalc (c) Vladimir Agafonkin, BSD 2-Clause (github.com/mourner/suncalc): moon illumination and rise/set.
+const RAD = Math.PI / 180, DAYMS = 864e5, J1970 = 2440588, J2000 = 2451545, OBL = RAD * 23.4397;
+const toDays = (d) => d.valueOf() / DAYMS - 0.5 + J1970 - J2000;
+const rightAsc = (l, b) => Math.atan2(Math.sin(l) * Math.cos(OBL) - Math.tan(b) * Math.sin(OBL), Math.cos(l));
+const decl = (l, b) => Math.asin(Math.sin(b) * Math.cos(OBL) + Math.cos(b) * Math.sin(OBL) * Math.sin(l));
+function sunCoords(d) {
+  const M = RAD * (357.5291 + 0.98560028 * d);
+  const L = M + RAD * (1.9148 * Math.sin(M) + 0.02 * Math.sin(2 * M) + 0.0003 * Math.sin(3 * M)) + RAD * 102.9372 + Math.PI;
+  return { dec: decl(L, 0), ra: rightAsc(L, 0) };
+}
+function moonCoords(d) {
+  const L = RAD * (218.316 + 13.176396 * d), M = RAD * (134.963 + 13.064993 * d), F = RAD * (93.272 + 13.22935 * d);
+  const l = L + RAD * 6.289 * Math.sin(M), b = RAD * 5.128 * Math.sin(F), dt = 385001 - 20905 * Math.cos(M);
+  return { ra: rightAsc(l, b), dec: decl(l, b), dist: dt };
+}
+// fraction: 0-1 lit; phase: 0 new, 0.25 first quarter, 0.5 full, 0.75 last quarter.
+function moonIllum(date) {
+  const d = toDays(date), s = sunCoords(d), m = moonCoords(d), sdist = 149598000;
+  const phi = Math.acos(Math.sin(s.dec) * Math.sin(m.dec) + Math.cos(s.dec) * Math.cos(m.dec) * Math.cos(s.ra - m.ra));
+  const inc = Math.atan2(sdist * Math.sin(phi), m.dist - sdist * Math.cos(phi));
+  const angle = Math.atan2(Math.cos(s.dec) * Math.sin(s.ra - m.ra), Math.sin(s.dec) * Math.cos(m.dec) - Math.cos(s.dec) * Math.sin(m.dec) * Math.cos(s.ra - m.ra));
+  return { fraction: (1 + Math.cos(inc)) / 2, phase: 0.5 + (0.5 * inc * (angle < 0 ? -1 : 1)) / Math.PI };
+}
+function moonAltitude(date, lat, lng) {
+  const d = toDays(date), c = moonCoords(d), lw = RAD * -lng, phi = RAD * lat;
+  const H = RAD * (280.16 + 360.9856235 * d) - lw - c.ra;
+  let h = Math.asin(Math.sin(phi) * Math.sin(c.dec) + Math.cos(phi) * Math.cos(c.dec) * Math.cos(H));
+  return h + (RAD * 0.017) / Math.tan(h + (RAD * 10.26) / (h + RAD * 5.1)); // refraction
+}
+// Moonrise and moonset on the day starting at `t` (local midnight), searching hour by hour (SunCalc's getMoonTimes).
+function moonTimes(t, lat, lng) {
+  const hc = 0.133 * RAD, at = (h) => new Date(t.valueOf() + h * 3600e3);
+  let h0 = moonAltitude(t, lat, lng) - hc, rise, set, ye;
+  for (let i = 1; i <= 24; i += 2) {
+    const h1 = moonAltitude(at(i), lat, lng) - hc, h2 = moonAltitude(at(i + 1), lat, lng) - hc;
+    const a = (h0 + h2) / 2 - h1, b = (h2 - h0) / 2, xe = -b / (2 * a);
+    ye = (a * xe + b) * xe + h1;
+    const dd = b * b - 4 * a * h1;
+    let roots = 0, x1 = 0, x2 = 0;
+    if (dd >= 0) {
+      const dx = Math.sqrt(dd) / (Math.abs(a) * 2);
+      x1 = xe - dx;
+      x2 = xe + dx;
+      if (Math.abs(x1) <= 1) roots++;
+      if (Math.abs(x2) <= 1) roots++;
+      if (x1 < -1) x1 = x2;
+    }
+    if (roots === 1) {
+      if (h0 < 0) rise = i + x1;
+      else set = i + x1;
+    } else if (roots === 2) {
+      rise = i + (ye < 0 ? x2 : x1);
+      set = i + (ye < 0 ? x1 : x2);
+    }
+    if (rise && set) break;
+    h0 = h2;
+  }
+  return { rise: rise ? at(rise) : null, set: set ? at(set) : null };
+}
+// New and full moons between two times: where the phase crosses 0 (1) and 0.5, found hourly then refined.
+function moonEvents(t0, t1) {
+  const out = [], step = 3600e3;
+  let pPrev = moonIllum(new Date(t0)).phase;
+  for (let t = t0 + step; t <= t1; t += step) {
+    const p = moonIllum(new Date(t)).phase;
+    const full = pPrev < 0.5 && p >= 0.5, nw = p < pPrev - 0.5;
+    if (full || nw) {
+      let a = t - step, b = t;
+      for (let k = 0; k < 12; k++) {
+        const mid = (a + b) / 2, pm = moonIllum(new Date(mid)).phase;
+        if (full ? pm < 0.5 : pm > 0.5) a = mid;
+        else b = mid;
+      }
+      out.push({ t: Math.round((a + b) / 2), full });
+    }
+    pPrev = p;
+  }
+  return out;
+}
+function moonPhaseName(p) {
+  const names = ["New moon", "Waxing crescent", "First quarter", "Waxing gibbous", "Full moon", "Waning gibbous", "Last quarter", "Waning crescent"];
+  return names[Math.round(p * 8) % 8];
+}
+// The moon as seen from the northern hemisphere (lit on the right while waxing; flipped south of the equator):
+// a grey disc with a few maria, the lit part bounded by a half circle and the terminator's half ellipse.
+function moonSvg(phase, lat) {
+  const r = 70, c = 75, k = Math.cos(phase * 2 * Math.PI) * r; // terminator x-radius (its size is what matters)
+  const waxing = phase < 0.5;
+  // Top to bottom round the lit side, then back up the terminator: it bulges towards the lit side for a crescent and
+  // away from it when gibbous (more than half lit).
+  const gibbous = phase > 0.25 && phase < 0.75;
+  const sweepOuter = waxing ? 1 : 0, sweepTerm = waxing ? (gibbous ? 1 : 0) : gibbous ? 0 : 1;
+  const lit = `M${c},${c - r} A${r},${r} 0 0 ${sweepOuter} ${c},${c + r} A${Math.abs(k)},${r} 0 0 ${sweepTerm} ${c},${c - r} Z`;
+  const flip = lat < 0 ? ` transform="rotate(180 ${c} ${c})"` : "";
+  return `<svg viewBox="0 0 150 150"><defs>
+      <radialGradient id="mlit" cx="40%" cy="38%" r="70%"><stop offset="0" stop-color="#fbfbf4"/><stop offset=".7" stop-color="#d9d9cf"/><stop offset="1" stop-color="#a8a89e"/></radialGradient>
+      <clipPath id="mclip"><path d="${lit}"/></clipPath></defs>
+    <circle cx="${c}" cy="${c}" r="${r}" fill="#262a30"/>
+    <g${flip}><g clip-path="url(#mclip)"><circle cx="${c}" cy="${c}" r="${r}" fill="url(#mlit)"/>
+      <g fill="#9e9e94" opacity=".45"><ellipse cx="58" cy="52" rx="16" ry="12"/><ellipse cx="88" cy="48" rx="11" ry="9"/><ellipse cx="96" cy="72" rx="13" ry="10"/>
+        <ellipse cx="70" cy="80" rx="9" ry="7"/><ellipse cx="52" cy="98" rx="12" ry="8"/><circle cx="84" cy="112" r="5"/><circle cx="110" cy="96" r="4"/></g></g></g>
+    <circle cx="${c}" cy="${c}" r="${r}" fill="none" stroke="rgba(255,255,255,.15)"/></svg>`;
 }
 
 // ---- chart helpers ---------------------------------------------------------------------------------------------

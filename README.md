@@ -27,6 +27,9 @@ own Home Assistant, switched with a button.
 - **Graphs**: temperature (outside with its min-max band, inside), humidity, wind (average and gusts), rain (bars:
   30 min, hourly, 6-hourly, daily or weekly to suit) and pressure, over **6 h, 24 h, 7 d, 30 d or a year**. Touch or
   hover for values. History comes from Home Assistant's own statistics, so a year of graphs is there from day one.
+- **Moon**, on the Graphs tab: tonight's phase drawn, % illuminated, age, moonrise and moonset at the station, the next
+  full and new moons, and a chart of the illumination over the chosen range (calculated with
+  [SunCalc](https://github.com/mourner/suncalc)'s formulas, no data source needed).
 - **Alerts**: wind gusts, heavy rain, a wet day, frost, heat, pressure falling fast (a storm coming), a station gone
   quiet, a low sensor battery, lightning nearby. Thresholds and on/off on the card, per station; the same alert at most every few hours.
   Sent to a Home Assistant webhook (phone, watch, a spoken announcement: see [`ha-automation.yaml`](ha-automation.yaml))
