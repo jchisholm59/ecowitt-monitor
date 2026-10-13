@@ -467,7 +467,7 @@ class Station {
 
   snapshot() {
     return {
-      station: this.id, name: this.name, device: this.device, ha: this.connected, error: this.error || null,
+      station: this.id, name: this.name, device: this.device, ha: this.connected, error: this.error || null, home: this.home,
       updated: this.lastData || null, age: this.lastData ? Math.round((Date.now() - this.lastData) / 1000) : null,
       values: Object.fromEntries(Object.keys(this.sensors).map((k) => [k, this.live[k]?.v ?? null])),
       units: Object.fromEntries(Object.keys(this.sensors).map((k) => [k, UNIT[k]])),

@@ -93,18 +93,28 @@ const STYLE = `
   .rainrows .bar i { display: block; height: 100%; background: var(--ec-rain); border-radius: 3px; }
   .rainrows span:first-child { color: var(--secondary-text-color); }
   .warn { color: var(--ec-bad); font-weight: 500; }
-  .lt { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
-  .lt .kv { flex: 0 0 auto; min-width: 250px; max-width: 420px; margin-top: 0; }
-  .lt .kv span, .lt .kv b { white-space: nowrap; }
-  .ltmap { position: relative; flex: 2 1 420px; height: 420px; border-radius: 12px; overflow: hidden; background: #0b1a2a; min-width: 0; }
-  .ltmap .tiles img { position: absolute; left: 0; top: 0; width: 256px; height: 256px; user-select: none; pointer-events: none; }
-  .ltmap svg.ov { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .ltmap .zoom { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
-  .ltmap .zoom button { border: none; border-radius: 8px; padding: 5px 9px; font: inherit; font-size: .8em; cursor: pointer;
-                        background: rgba(0,0,0,.6); color: #fff; }
-  .ltmap .zoom button.on { background: var(--primary-color); }
-  .ltmap .attr { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,.8); text-shadow: 0 0 3px #000; }
-  @media (max-width: 640px) { .ltmap { height: 320px; flex-basis: 100%; } }
+  .pair { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 900px) { .pair { grid-template-columns: 1fr; } }
+  .phs { text-transform: none; letter-spacing: 0; }
+  .smap { position: relative; height: 380px; border-radius: 12px; overflow: hidden; background: #0b1a2a; }
+  .smap .tiles img, .smap .wms img { position: absolute; left: 0; top: 0; user-select: none; pointer-events: none; }
+  .smap .wms img { width: 100%; height: 100%; opacity: 0; z-index: 1; }
+  .smap svg.ov { z-index: 3; } .smap .zoom, .smap .play, .smap .attr { z-index: 4; }
+  .smap .pp { display: inline-flex; padding: 5px 7px; } .smap .pp svg { width: 14px; height: 14px; fill: #fff; }
+  .smap .wms img.on { opacity: .85; }
+  .smap svg.ov { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .smap .zoom { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
+  .smap button { border: none; border-radius: 8px; padding: 5px 9px; font: inherit; font-size: .8em; cursor: pointer; background: rgba(0,0,0,.6); color: #fff; }
+  .smap button.on { background: var(--primary-color); }
+  .smap .play { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 6px; align-items: center; }
+  .smap .play b { background: rgba(0,0,0,.6); color: #fff; border-radius: 8px; padding: 4px 8px; font-size: .8em; font-weight: 500; }
+  .smap .attr { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,.85); text-shadow: 0 0 3px #000; text-align: right; }
+  .rdleg { display: flex; align-items: center; gap: 6px; margin-top: 8px; font-size: .85em; color: var(--secondary-text-color); flex-wrap: wrap; }
+  .rdleg i { width: 70px; height: 8px; border-radius: 4px; display: inline-block; margin-right: 8px; }
+  .rdleg i.rain { background: linear-gradient(90deg, #99ffff, #00b7ff, #0047ff, #00ff00, #00b200, #ffff00, #ffaa00, #ff0000, #ff00ff); }
+  .rdleg i.snow { background: linear-gradient(90deg, #ccffff, #99ccff, #6699ff, #3366ff, #9933cc, #cc00cc); }
+  .rdleg .note { margin-left: auto; }
+  @media (max-width: 640px) { .smap { height: 300px; } }
   .panel.wide { grid-column: 1 / -1; }
   .ranges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
   .ranges button { border: 1px solid var(--divider-color); background: var(--card-background-color, transparent); color: var(--primary-text-color); font: inherit;
@@ -184,6 +194,7 @@ class EcowittCard extends HTMLElement {
     clearInterval(this._timer);
     clearInterval(this._histTimer);
     this._timer = this._histTimer = null;
+    this._radar?.stop();
   }
 
   _start() {
@@ -342,13 +353,13 @@ class EcowittCard extends HTMLElement {
         ${hilo("inT", "°")}
         <div class="kv"><span>Humidity</span><b>${f0(v.inH)} %</b><span>Dew point</span><b>${f1(v.inDew)} °C</b>
           ${(L.batteries || []).length ? `<span>Batteries</span><b class="${low.length ? "warn" : ""}">${low.length ? esc(low.map((b) => b.name.replace(/ battery/i, "")).join(", ")) + " low" : "OK"}</b>` : ""}</div></div>
-      ${L.lightning ? this._lightningPanel(L.lightning) : ""}
+      ${L.home ? `<div class="pair">${L.lightning ? this._lightningPanel(L.lightning) : ""}${this._radarPanel()}</div>` : ""}
     </div>`;
-    if (L.lightning) this._mountLtMap(L.lightning);
+    if (L.home) this._mountMaps(L);
   }
 
-  // Lightning (Blitzortung): the last hour's strikes around the station, newest brightest, with rings at 10, 25, 50
-  // and 100 km, and the nearest / latest strike and counts beside it.
+  // Lightning (Blitzortung): the last hour's strikes on the map, newest brightest, and the nearest / latest strike and
+  // counts under it.
   _lightningPanel(Lt) {
     const ago = (t) => {
       const s = Math.round((Date.now() - t) / 1000);
@@ -356,105 +367,55 @@ class EcowittCard extends HTMLElement {
     };
     const where = (x) => (x ? `${f0(x.km)} km ${compass(x.bearing)}, ${ago(x.t)}` : "–");
     const quiet = !Lt.count60;
-    return `<div class="panel wide"><div class="ph"><ha-icon icon="mdi:flash"></ha-icon>Lightning <span style="text-transform:none;letter-spacing:0">· Blitzortung, within 100 km of the station's home location</span></div>
-      <div class="lt"><div id="ltmap-slot" class="ltmap"></div>
-        <div class="kv">
-          ${quiet ? `<span>Last hour</span><b>No strikes</b>` : `<span>Last 15 min</span><b>${Lt.count15} strike${Lt.count15 === 1 ? "" : "s"}</b><span>Last hour</span><b>${Lt.count60} strike${Lt.count60 === 1 ? "" : "s"}</b>`}
-          <span>Nearest, 15 min</span><b>${where(Lt.nearest15)}</b>
-          <span>Nearest, hour</span><b>${where(Lt.nearest60)}</b>
-          <span>Latest</span><b>${Lt.last ? where(Lt.last) : "none in the last 3 h"}</b>
-          <span></span><b class="sub" style="font-weight:400">${quiet ? "" : `<span style="color:#ffee58">⚡</span> 5 min <span style="color:#ffa726">●</span> 15 min <span style="color:#ff5252">●</span> 1 h`}</b></div></div></div>`;
+    return `<div class="panel"><div class="ph"><ha-icon icon="mdi:flash"></ha-icon>Lightning <span class="phs">· Blitzortung, within 100 km</span></div>
+      <div id="map-lt" class="smap"></div>
+      <div class="kv">
+        ${quiet ? `<span>Last hour</span><b>No strikes</b>` : `<span>Last 15 min · hour</span><b>${Lt.count15} · ${Lt.count60} strike${Lt.count60 === 1 ? "" : "s"}</b>`}
+        <span>Nearest, 15 min</span><b>${where(Lt.nearest15)}</b>
+        <span>Nearest, hour</span><b>${where(Lt.nearest60)}</b>
+        <span>Latest</span><b>${Lt.last ? where(Lt.last) : "none in the last 3 h"}</b>
+        ${quiet ? "" : `<span></span><b class="sub" style="font-weight:400"><span style="color:#ffee58">⚡</span> 5 min <span style="color:#ffa726">●</span> 15 min <span style="color:#ff5252">●</span> 1 h</b>`}</div></div>`;
   }
 
-  // The lightning map: Esri World Imagery (free, no key) with place names, centred on the station's Home Assistant
-  // home location, range rings and the strikes drawn over it. The map element is kept between repaints (moved into the
-  // new panel), so tiles don't reload every 15 s; only the overlay is redrawn.
-  _mountLtMap(Lt) {
-    const slot = this.shadowRoot.getElementById("ltmap-slot");
-    if (!slot || !Lt.home) return;
-    if (!this._ltEl) {
-      this._ltEl = document.createElement("div");
-      this._ltEl.style.cssText = "position:absolute;inset:0";
-      this._ltEl.innerHTML = `<div class="tiles"></div><svg class="ov"></svg>
-        <div class="zoom">${[25, 50, 100].map((k) => `<button data-km="${k}">${k} km</button>`).join("")}</div><div class="attr">Imagery © Esri, Maxar, Earthstar Geographics</div>`;
-      this._ltEl.querySelector(".zoom").addEventListener("click", (e) => {
-        const b = e.target.closest("[data-km]");
-        if (!b) return;
-        this._ltKm = Number(b.dataset.km);
-        store.set("ltkm", this._ltKm);
-        this._drawLtMap();
-      });
-      this._ltKm = Number(store.get("ltkm", 100)) || 100;
-      new ResizeObserver(() => this._drawLtMap()).observe(this._ltEl);
-    }
-    slot.appendChild(this._ltEl);
-    this._lt = Lt;
-    requestAnimationFrame(() => this._drawLtMap());
+  // Environment Canada's radar (MSC GeoMet, free, no key): rain and snow rate, the last hour looped.
+  _radarPanel() {
+    return `<div class="panel"><div class="ph"><ha-icon icon="mdi:radar"></ha-icon>Radar <span class="phs">· Environment Canada, rain and snow</span></div>
+      <div id="map-rd" class="smap"></div>
+      <div class="rdleg"><span>Rain</span><i class="rain"></i><span>Snow</span><i class="snow"></i><span class="note" id="rd-note"></span></div></div>`;
   }
 
-  _drawLtMap() {
-    const el = this._ltEl, Lt = this._lt;
-    if (!el || !Lt?.home || !el.isConnected) return;
-    const W = el.clientWidth, H = el.clientHeight;
-    if (!W || !H) return;
-    const { lat, lon } = Lt.home;
-    // Web Mercator: world pixel coordinates at zoom z.
-    const wx = (lo, z) => ((lo + 180) / 360) * 256 * 2 ** z;
-    const wy = (la, z) => ((1 - Math.log(Math.tan((la * Math.PI) / 180) + 1 / Math.cos((la * Math.PI) / 180)) / Math.PI) / 2) * 256 * 2 ** z;
-    const mpp0 = 156543.03392 * Math.cos((lat * Math.PI) / 180); // metres per pixel at zoom 0
-    const want = ((Math.min(W, H) / 2) * 0.94 * mpp0) / (this._ltKm * 1000);
-    // A fractional zoom (zf) so the chosen range fills the map; tiles come from the nearest whole zoom (z), scaled.
-    const zf = Math.max(3, Math.min(14, Math.log2(want))), z = Math.round(zf);
-    const mpp = mpp0 / 2 ** zf, cx = wx(lon, zf), cy = wy(lat, zf);
-    const P = (la, lo) => [wx(lo, zf) - cx + W / 2, wy(la, zf) - cy + H / 2];
-    // Tiles: imagery, then the boundaries-and-places labels on top.
-    const box = el.querySelector(".tiles"), keep = new Set(), n = 2 ** z, T = (256 * 2 ** zf) / n; // T: a tile's size on screen
-    this._ltTiles ||= new Map();
-    const tx0 = Math.floor((cx - W / 2) / T), tx1 = Math.floor((cx + W / 2) / T);
-    const ty0 = Math.max(0, Math.floor((cy - H / 2) / T)), ty1 = Math.min(n - 1, Math.floor((cy + H / 2) / T));
-    for (const layer of ["World_Imagery", "Reference/World_Boundaries_and_Places"])
-      for (let tx = tx0; tx <= tx1; tx++)
-        for (let ty = ty0; ty <= ty1; ty++) {
-          const k = `${layer}/${z}/${tx}/${ty}`;
-          keep.add(k);
-          let img = this._ltTiles.get(k);
-          if (!img) {
-            img = document.createElement("img");
-            img.alt = "";
-            img.decoding = "async";
-            img.style.zIndex = layer === "World_Imagery" ? 0 : 1;
-            img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/${layer}/MapServer/tile/${z}/${ty}/${((tx % n) + n) % n}`;
-            this._ltTiles.set(k, img);
-            box.appendChild(img);
-          }
-          const left = Math.round(tx * T - cx + W / 2), top = Math.round(ty * T - cy + H / 2);
-          img.style.transform = `translate(${left}px, ${top}px)`;
-          img.style.width = `${Math.round((tx + 1) * T - cx + W / 2) - left + 1}px`; // +1: no hairline seams between tiles
-          img.style.height = `${Math.round((ty + 1) * T - cy + H / 2) - top + 1}px`;
-        }
-    for (const [k, img] of this._ltTiles) if (!keep.has(k)) (img.remove(), this._ltTiles.delete(k));
-    for (const b of el.querySelectorAll(".zoom button")) b.classList.toggle("on", Number(b.dataset.km) === this._ltKm);
-    // Overlay: rings (true distances), N, the strikes (oldest first, so the newest are on top), home.
-    const C = [W / 2, H / 2];
-    let s = `<defs><filter id="lth"><feDropShadow dx="0" dy="0" stdDeviation="1.2" flood-color="#000" flood-opacity=".9"/></filter></defs>`;
-    for (const km of [10, 25, 50, 100]) {
-      const r = (km * 1000) / mpp;
-      if (r < 12 || r > Math.hypot(W, H)) continue;
-      s += `<circle cx="${C[0]}" cy="${C[1]}" r="${r.toFixed(1)}" fill="none" stroke="#fff" stroke-opacity=".75" stroke-width="1.3" stroke-dasharray="${km === 100 ? "" : "5 4"}" filter="url(#lth)"/>
-            <text x="${C[0] + 4}" y="${(C[1] - r + 13).toFixed(1)}" filter="url(#lth)" style="font-size:11px;font-weight:600;fill:#fff">${km} km</text>`;
+  // The maps are kept between repaints (moved into the new panels), so tiles and radar frames don't reload every 15 s.
+  _mountMaps(L) {
+    const st = this._station;
+    if (!this._maps) {
+      this._maps = {
+        lt: new SatMap({ ranges: [25, 50, 100], key: "ltkm", def: 100, rings: [10, 25, 50, 100], onDraw: (v) => this._drawStrikes(v) }),
+        rd: new SatMap({ ranges: [50, 100, 250], key: "rdkm", def: 250, rings: [50, 100, 250], onDraw: (v) => this._radar?.draw(v), attr: "Radar: Environment and Climate Change Canada" }),
+      };
+      this._radar = new Radar(this._maps.rd);
     }
-    s += `<text x="${C[0]}" y="16" text-anchor="middle" filter="url(#lth)" style="font-size:13px;font-weight:700;fill:#ff5252">N</text>`;
-    for (const [age, , , la, lo] of [...(Lt.strikes || [])].sort((a, b) => b[0] - a[0])) {
+    const lt = this.shadowRoot.getElementById("map-lt"), rd = this.shadowRoot.getElementById("map-rd");
+    this._lt = L.lightning;
+    if (lt) this._maps.lt.mount(lt, L.home, st);
+    if (rd) {
+      this._maps.rd.mount(rd, L.home, st);
+      this._radar.start(this.shadowRoot.getElementById("rd-note"));
+    }
+  }
+
+  // Strikes on the lightning map, oldest first so the newest are on top.
+  _drawStrikes(v) {
+    let s = "";
+    for (const [age, , , la, lo] of [...(this._lt?.strikes || [])].sort((a, b) => b[0] - a[0])) {
       if (!fin(la) || !fin(lo)) continue;
-      const [x, y] = P(la, lo);
-      if (x < -10 || y < -10 || x > W + 10 || y > H + 10) continue;
+      const [x, y] = v.P(la, lo);
+      if (x < -10 || y < -10 || x > v.W + 10 || y > v.H + 10) continue;
       const col = age < 300 ? "#ffee58" : age < 900 ? "#ffa726" : "#ff5252";
       s += age < 300
         ? `<path d="M${x - 2},${y - 7} L${x + 3},${y - 1} L${x},${y - 1} L${x + 2},${y + 7} L${x - 3},${y} L${x},${y} Z" fill="${col}" stroke="#000" stroke-width=".8"/>`
         : `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${col}" stroke="#000" stroke-width=".7" opacity="${age < 900 ? 1 : 0.75}"/>`;
     }
-    s += `<circle cx="${C[0]}" cy="${C[1]}" r="6" fill="var(--primary-color)" stroke="#fff" stroke-width="2"/>`;
-    el.querySelector("svg.ov").innerHTML = s;
+    return s;
   }
 
   // A compass rose with an arrow pointing the way the wind is blowing (it comes from `dir`).
@@ -711,6 +672,206 @@ class EcowittCard extends HTMLElement {
     };
     B.querySelector("#signin")?.addEventListener("click", signin);
     B.querySelector("#pw")?.addEventListener("keydown", (e) => e.key === "Enter" && signin());
+  }
+}
+
+// ---- satellite map ---------------------------------------------------------------------------------------------
+// Esri World Imagery with place names (free, no key), centred on a point, sized so a chosen range (km) fills it, with
+// range rings and N drawn over it, and an onDraw(view) hook for more (strikes, radar). Tiles come from the nearest whole
+// zoom, scaled to a fractional one.
+class SatMap {
+  constructor({ ranges, key, def, rings, onDraw, attr }) {
+    this.ranges = ranges;
+    this.key = key;
+    this.rings = rings;
+    this.onDraw = onDraw;
+    this.km = Number(store.get(key, def)) || def;
+    this.tiles = new Map();
+    this.el = document.createElement("div");
+    this.el.style.cssText = "position:absolute;inset:0";
+    this.el.innerHTML = `<div class="tiles"></div><div class="wms"></div><svg class="ov"></svg><div class="zoom">${ranges.map((k) => `<button data-km="${k}">${k} km</button>`).join("")}</div>
+      <div class="ctl"></div><div class="attr">Imagery © Esri, Maxar, Earthstar Geographics${attr ? `<br>${attr}` : ""}</div>`;
+    this.el.querySelector(".zoom").addEventListener("click", (e) => {
+      const b = e.target.closest("[data-km]");
+      if (!b) return;
+      this.km = Number(b.dataset.km);
+      store.set(this.key, this.km);
+      this.draw();
+    });
+    new ResizeObserver(() => this.draw()).observe(this.el);
+  }
+
+  mount(slot, center, id) {
+    slot.appendChild(this.el);
+    this.center = center;
+    this.id = id;
+    requestAnimationFrame(() => this.draw());
+  }
+
+  view() {
+    const W = this.el.clientWidth, H = this.el.clientHeight;
+    if (!W || !H || !this.center) return null;
+    const { lat, lon } = this.center;
+    const wx = (lo, z) => ((lo + 180) / 360) * 256 * 2 ** z;
+    const wy = (la, z) => ((1 - Math.log(Math.tan((la * Math.PI) / 180) + 1 / Math.cos((la * Math.PI) / 180)) / Math.PI) / 2) * 256 * 2 ** z;
+    const mpp0 = 156543.03392 * Math.cos((lat * Math.PI) / 180);
+    const zf = Math.max(3, Math.min(14, Math.log2(((Math.min(W, H) / 2) * 0.94 * mpp0) / (this.km * 1000))));
+    const cx = wx(lon, zf), cy = wy(lat, zf), world = 256 * 2 ** zf, E = 20037508.342789244;
+    const m = (px, py) => [(px / world) * 2 * E - E, E - (py / world) * 2 * E]; // EPSG:3857 metres
+    const [x0, y1] = m(cx - W / 2, cy - H / 2), [x1, y0] = m(cx + W / 2, cy + H / 2);
+    return { W, H, zf, z: Math.round(zf), cx, cy, mpp: mpp0 / 2 ** zf, P: (la, lo) => [wx(lo, zf) - cx + W / 2, wy(la, zf) - cy + H / 2], bbox: [x0, y0, x1, y1] };
+  }
+
+  draw() {
+    if (!this.el.isConnected) return;
+    const v = this.view();
+    if (!v) return;
+    const { W, H, zf, z, cx, cy } = v;
+    const box = this.el.querySelector(".tiles"), keep = new Set(), n = 2 ** z, T = (256 * 2 ** zf) / n;
+    const tx0 = Math.floor((cx - W / 2) / T), tx1 = Math.floor((cx + W / 2) / T);
+    const ty0 = Math.max(0, Math.floor((cy - H / 2) / T)), ty1 = Math.min(n - 1, Math.floor((cy + H / 2) / T));
+    for (const layer of ["World_Imagery", "Reference/World_Boundaries_and_Places"])
+      for (let tx = tx0; tx <= tx1; tx++)
+        for (let ty = ty0; ty <= ty1; ty++) {
+          const k = `${layer}/${z}/${tx}/${ty}`;
+          keep.add(k);
+          let img = this.tiles.get(k);
+          if (!img) {
+            img = document.createElement("img");
+            img.alt = "";
+            img.decoding = "async";
+            img.style.zIndex = layer === "World_Imagery" ? 0 : 2; // place names above the radar (1)
+            img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/${layer}/MapServer/tile/${z}/${ty}/${((tx % n) + n) % n}`;
+            this.tiles.set(k, img);
+            box.appendChild(img);
+          }
+          const left = Math.round(tx * T - cx + W / 2), top = Math.round(ty * T - cy + H / 2);
+          img.style.transform = `translate(${left}px, ${top}px)`;
+          img.style.width = `${Math.round((tx + 1) * T - cx + W / 2) - left + 1}px`; // +1: no hairline seams
+          img.style.height = `${Math.round((ty + 1) * T - cy + H / 2) - top + 1}px`;
+        }
+    for (const [k, img] of this.tiles) if (!keep.has(k)) (img.remove(), this.tiles.delete(k));
+    for (const b of this.el.querySelectorAll(".zoom button")) b.classList.toggle("on", Number(b.dataset.km) === this.km);
+    const C = [W / 2, H / 2];
+    let s = `<defs><filter id="mh"><feDropShadow dx="0" dy="0" stdDeviation="1.2" flood-color="#000" flood-opacity=".9"/></filter></defs>`;
+    for (const km of this.rings) {
+      const r = (km * 1000) / v.mpp;
+      if (r < 12 || r > Math.hypot(W, H)) continue;
+      s += `<circle cx="${C[0]}" cy="${C[1]}" r="${r.toFixed(1)}" fill="none" stroke="#fff" stroke-opacity=".75" stroke-width="1.3" stroke-dasharray="${km === this.rings[this.rings.length - 1] ? "" : "5 4"}" filter="url(#mh)"/>
+            <text x="${C[0] + 4}" y="${(C[1] - r + 13).toFixed(1)}" filter="url(#mh)" style="font-size:11px;font-weight:600;fill:#fff">${km} km</text>`;
+    }
+    s += `<text x="${C[0]}" y="16" text-anchor="middle" filter="url(#mh)" style="font-size:13px;font-weight:700;fill:#ff5252">N</text>`;
+    s += this.onDraw?.(v) || "";
+    s += `<circle cx="${C[0]}" cy="${C[1]}" r="6" fill="var(--primary-color)" stroke="#fff" stroke-width="2"/>`;
+    this.el.querySelector("svg.ov").innerHTML = s;
+  }
+}
+
+// Environment Canada radar on a SatMap: rain and snow rate (MSC GeoMet WMS, 6-minute frames, kept 3 h), the last hour
+// looped. One image per frame and layer, cut to the map's exact view, so a loop is ~22 requests; frames are kept
+// while the view stays the same.
+const GEOMET = "https://geo.weather.gc.ca/geomet";
+const RADAR_LAYERS = ["RADAR_1KM_RRAI", "RADAR_1KM_RSNO"];
+class Radar {
+  constructor(map) {
+    this.map = map;
+    this.times = [];
+    this.i = 0;
+    this.playing = store.get("radarplay", "1") !== "0";
+    this.frames = new Map(); // `${viewKey}|${time}|${layer}` -> img
+    const ctl = map.el.querySelector(".ctl");
+    ctl.className = "play";
+    ctl.innerHTML = `<button class="pp"></button><b class="when">Loading radar…</b>`;
+    ctl.querySelector(".pp").addEventListener("click", () => {
+      this.playing = !this.playing;
+      store.set("radarplay", this.playing ? "1" : "0");
+      if (!this.playing) this.i = this.times.length - 1;
+      this.show();
+    });
+  }
+
+  async start(note) {
+    this.note = note;
+    if (!this.timer) {
+      this.timer = setInterval(() => this.tick(), 550);
+      this.timesTimer = setInterval(() => this.loadTimes(), 180000);
+    }
+    if (!this.times.length || Date.now() - (this.loadedAt || 0) > 180000) await this.loadTimes();
+    this.show();
+  }
+
+  stop() {
+    clearInterval(this.timer);
+    clearInterval(this.timesTimer);
+    this.timer = this.timesTimer = null;
+  }
+
+  // The available times, from the rain layer's capabilities: "start/end/PT6M". The last hour (11 frames).
+  async loadTimes() {
+    try {
+      const r = await fetch(`${GEOMET}?service=WMS&version=1.3.0&request=GetCapabilities&layer=${RADAR_LAYERS[0]}`);
+      const x = await r.text();
+      const m = /<Dimension name="time"[^>]*>([^/<]+)\/([^/<]+)\/PT(\d+)M</.exec(x);
+      if (!m) throw new Error("no time dimension");
+      const end = Date.parse(m[2]), step = Number(m[3]) * 60e3, start = Date.parse(m[1]);
+      const times = [];
+      for (let t = end - 10 * step; t <= end; t += step) if (t >= start) times.push(new Date(t).toISOString().replace(".000Z", "Z"));
+      const changed = times.join() !== this.times.join();
+      this.times = times;
+      this.loadedAt = Date.now();
+      if (changed) this.i = this.playing ? 0 : times.length - 1;
+      if (this.note) this.note.textContent = "";
+    } catch (e) {
+      if (this.note) this.note.textContent = "Radar unavailable: " + e.message;
+    }
+    this.draw(this.map.view());
+  }
+
+  // Called by the map on every redraw: (re)build the frames for this view. Returns no SVG.
+  draw(v) {
+    if (!v || !this.times.length) return "";
+    const W = Math.round(v.W), H = Math.round(v.H);
+    const key = `${v.bbox.map((x) => Math.round(x)).join(",")},${W}x${H}`;
+    const box = this.map.el.querySelector(".wms");
+    const keep = new Set();
+    for (const t of this.times)
+      for (const layer of RADAR_LAYERS) {
+        const k = `${key}|${t}|${layer}`;
+        keep.add(k);
+        if (this.frames.has(k)) continue;
+        const img = document.createElement("img");
+        img.alt = "";
+        img.decoding = "async";
+        img.dataset.t = t;
+        img.src = `${GEOMET}?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&LAYERS=${layer}&STYLES=&CRS=EPSG:3857&BBOX=${v.bbox.join(",")}&WIDTH=${W}&HEIGHT=${H}&FORMAT=image/png&TRANSPARENT=TRUE&TIME=${t}`;
+        this.frames.set(k, img);
+        box.appendChild(img);
+      }
+    for (const [k, img] of this.frames) if (!keep.has(k)) (img.remove(), this.frames.delete(k));
+    this.key = key;
+    this.show();
+    return "";
+  }
+
+  tick() {
+    if (!this.map.el.isConnected) return this.stop();
+    if (!this.playing || this.times.length < 2) return;
+    // Hold the newest frame a little longer.
+    if (this.i === this.times.length - 1 && (this.hold = (this.hold || 0) + 1) < 4) return;
+    this.hold = 0;
+    this.i = (this.i + 1) % this.times.length;
+    this.show();
+  }
+
+  show() {
+    const t = this.times[this.i];
+    for (const img of this.map.el.querySelectorAll(".wms img")) img.classList.toggle("on", img.dataset.t === t);
+    const when = this.map.el.querySelector(".when"), pp = this.map.el.querySelector(".pp");
+    if (pp) pp.innerHTML = `<svg viewBox="0 0 24 24"><path d="${this.playing ? "M6 5h4v14H6zM14 5h4v14h-4z" : "M8 5v14l11-7z"}"/></svg>`;
+    if (when && t) {
+      const d = new Date(t), mins = Math.round((Date.now() - d) / 60e3);
+      when.textContent = `${d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })} · ${mins} min ago`;
+    }
   }
 }
 
