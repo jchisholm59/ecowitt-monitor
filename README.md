@@ -22,8 +22,8 @@ own Home Assistant, switched with a button.
   Imagery with place names; range rings at 10, 25, 50 and 100 km; zoom to 25, 50 or 100 km; newest brightest), strikes in the last 15 minutes and hour, the nearest and the latest, a strike-count graph, and a
   "lightning within X km" alert.
 - **Radar**: Environment Canada's rain and snow radar ([MSC GeoMet](https://eccc-msc.github.io/open-data/msc-geomet/readme_en/),
-  free, no key) on the same satellite map, centred on the station, the last hour looped (play / pause), zoom 50, 100 or
-  250 km. Canada and the northern US border only: that's where the radar network is.
+  free, no key) on the same satellite map, centred on the station, the last hour looped (play / pause), zoom 50, 100,
+  250, 500 or 1,000 km. Canada and the northern US border only: that's where the radar network is.
 - **Graphs**: temperature (outside with its min-max band, inside), humidity, wind (average and gusts), rain (bars:
   30 min, hourly, 6-hourly, daily or weekly to suit) and pressure, over **6 h, 24 h, 7 d, 30 d or a year**. Touch or
   hover for values. History comes from Home Assistant's own statistics, so a year of graphs is there from day one.

@@ -103,7 +103,7 @@ const STYLE = `
   .smap .pp { display: inline-flex; padding: 5px 7px; } .smap .pp svg { width: 14px; height: 14px; fill: #fff; }
   .smap .wms img.on { opacity: .85; }
   .smap svg.ov { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .smap .zoom { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
+  .smap .zoom { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; max-width: calc(100% - 60px); }
   .smap button { border: none; border-radius: 8px; padding: 5px 9px; font: inherit; font-size: .8em; cursor: pointer; background: rgba(0,0,0,.6); color: #fff; }
   .smap button.on { background: var(--primary-color); }
   .smap .play { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 6px; align-items: center; }
@@ -390,7 +390,7 @@ class EcowittCard extends HTMLElement {
     if (!this._maps) {
       this._maps = {
         lt: new SatMap({ ranges: [25, 50, 100], key: "ltkm", def: 100, rings: [10, 25, 50, 100], onDraw: (v) => this._drawStrikes(v) }),
-        rd: new SatMap({ ranges: [50, 100, 250], key: "rdkm", def: 250, rings: [50, 100, 250], onDraw: (v) => this._radar?.draw(v), attr: "Radar: Environment and Climate Change Canada" }),
+        rd: new SatMap({ ranges: [50, 100, 250, 500, 1000], key: "rdkm", def: 250, rings: [50, 100, 250, 500, 1000], onDraw: (v) => this._radar?.draw(v), attr: "Radar: Environment and Climate Change Canada" }),
       };
       this._radar = new Radar(this._maps.rd);
     }
@@ -689,7 +689,7 @@ class SatMap {
     this.tiles = new Map();
     this.el = document.createElement("div");
     this.el.style.cssText = "position:absolute;inset:0";
-    this.el.innerHTML = `<div class="tiles"></div><div class="wms"></div><svg class="ov"></svg><div class="zoom">${ranges.map((k) => `<button data-km="${k}">${k} km</button>`).join("")}</div>
+    this.el.innerHTML = `<div class="tiles"></div><div class="wms"></div><svg class="ov"></svg><div class="zoom">${ranges.map((k) => `<button data-km="${k}">${k >= 1000 ? k / 1000 + "k" : k} km</button>`).join("")}</div>
       <div class="ctl"></div><div class="attr">Imagery © Esri, Maxar, Earthstar Geographics${attr ? `<br>${attr}` : ""}</div>`;
     this.el.querySelector(".zoom").addEventListener("click", (e) => {
       const b = e.target.closest("[data-km]");
@@ -754,9 +754,11 @@ class SatMap {
     for (const b of this.el.querySelectorAll(".zoom button")) b.classList.toggle("on", Number(b.dataset.km) === this.km);
     const C = [W / 2, H / 2];
     let s = `<defs><filter id="mh"><feDropShadow dx="0" dy="0" stdDeviation="1.2" flood-color="#000" flood-opacity=".9"/></filter></defs>`;
+    let lastR = 0;
     for (const km of this.rings) {
       const r = (km * 1000) / v.mpp;
-      if (r < 12 || r > Math.hypot(W, H)) continue;
+      if (r < 12 || r - lastR < 18 || r > Math.hypot(W, H)) continue; // too small, too close to the last one, or off the map
+      lastR = r;
       s += `<circle cx="${C[0]}" cy="${C[1]}" r="${r.toFixed(1)}" fill="none" stroke="#fff" stroke-opacity=".75" stroke-width="1.3" stroke-dasharray="${km === this.rings[this.rings.length - 1] ? "" : "5 4"}" filter="url(#mh)"/>
             <text x="${C[0] + 4}" y="${(C[1] - r + 13).toFixed(1)}" filter="url(#mh)" style="font-size:11px;font-weight:600;fill:#fff">${km} km</text>`;
     }
