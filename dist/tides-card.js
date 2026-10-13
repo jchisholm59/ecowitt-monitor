@@ -45,6 +45,8 @@ const HOUR = 3600e3, DAY = 864e5;
 let TZ;
 const MY_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone;
 const hm = (t) => new Date(t).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: TZ });
+// "America/Halifax" -> "America/Halifax"; "Etc/GMT-4" (an ocean zone) -> "GMT+4".
+const tzName = (z) => (/^Etc\//.test(z) ? new Intl.DateTimeFormat("en", { timeZone: z, timeZoneName: "shortOffset" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value || z : z.replace(/_/g, " "));
 const dayKey = (t) => new Date(t).toLocaleDateString("en-CA", { timeZone: TZ });
 // Local midnight (in TZ) of the day containing t.
 function midnight(t) {
@@ -391,7 +393,7 @@ class TidesCard extends HTMLElement {
       <div class="panel"><div class="ph"><ha-icon icon="mdi:clock-outline"></ha-icon>Next</div>
         <div class="next">${first.map((e) => evRow(e, e.high ? "High" : "Low")).join("")}</div>
         <div class="kv">${sun ? `<span>Sunrise</span><b>${hm(sun.rise)}</b><span>Sunset</span><b>${hm(sun.set)}</b>` : ""}</div>
-        ${TZ && TZ !== MY_TZ ? `<div class="sub" style="font-size:.8em">Times are local there (${esc(TZ.replace(/_/g, " "))}, ${esc(new Date().toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", timeZone: TZ }))} now)</div>` : ""}</div>
+                ${TZ && TZ !== MY_TZ ? `<div class="sub" style="font-size:.8em">Times are local there (${esc(tzName(TZ))}: ${esc(hm(now))} now)</div>` : ""}</div>
       <div class="panel"><div class="ph"><ha-icon icon="mdi:moon-waning-crescent"></ha-icon>Moon</div>
         <div class="mn">${moonSvg(m.phase, lat ?? 45)}<div class="kv"><span>Phase</span><b>${moonPhaseName(m.phase)}</b><span>Illuminated</span><b>${Math.round(m.fraction * 100)} %</b><span>Tides</span><b style="white-space:normal">${kind}</b></div></div></div>
       <div class="panel wide"><div class="ph"><ha-icon icon="mdi:chart-bell-curve"></ha-icon>Today <span class="phs">· highs and lows</span></div>
@@ -560,7 +562,9 @@ class TidesCard extends HTMLElement {
     for (const e of evs) {
       const x = X(e.t), y = Y(e.v);
       s += `<circle cx="${x}" cy="${y}" r="4" fill="${e.high ? "var(--td-high)" : "var(--td-low)"}" stroke="var(--secondary-background-color)" stroke-width="1.5"/>`;
-      if (!week) s += `<text x="${x}" y="${e.high ? y - 9 : y + 16}" text-anchor="middle" style="font-size:11px;fill:var(--primary-text-color)">${hm(e.t)} · ${this._u(e.v)}</text>`;
+      // Labels near an edge are anchored inwards, so they aren't cut off.
+      const anchor = x > W - R - 60 ? "end" : x < L + 60 ? "start" : "middle";
+      if (!week) s += `<text x="${x}" y="${e.high ? y - 9 : y + 16}" text-anchor="${anchor}" style="font-size:11px;fill:var(--primary-text-color)">${hm(e.t)} · ${this._u(e.v)}</text>`;
     }
     // Now.
     const now = Date.now();
