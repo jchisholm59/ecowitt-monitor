@@ -150,7 +150,9 @@ class Station {
       return;
     }
     try {
-      this.ws = new WebSocket(this.url.replace(/^http/, 'ws') + '/api/websocket');
+      // Inside a Home Assistant add-on, HA is reached through the Supervisor (http://supervisor/core, its websocket at
+      // /websocket); otherwise HA's own /api/websocket.
+      this.ws = new WebSocket(this.url.replace(/^http/, 'ws') + (/\/\/supervisor\/core$/.test(this.url) ? '/websocket' : '/api/websocket'));
     } catch (e) {
       this.error = e.message;
       return setTimeout(() => this.connect(), this.reconnectMs);
