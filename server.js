@@ -728,6 +728,30 @@ async function tides(id) {
   return data;
 }
 
+// The station catalogue (~1,600, ~1,100 with predictions), cached 6 h, for the card's station search; and the card's
+// saved station list (data/tide-stations.json), so every device shows the same stations.
+let tideCat = null;
+async function tideCatalogue() {
+  if (tideCat && Date.now() - tideCat.at < 6 * 3600e3) return tideCat.list;
+  const all = await iwls('');
+  const list = all
+    .filter((x) => (x.timeSeries || []).some((t) => t.code === 'wlp'))
+    .map((x) => ({ id: x.id, code: x.code, name: x.officialName, alt: x.alternativeName || '', lat: x.latitude, lon: x.longitude, gauge: !!x.operating && (x.timeSeries || []).some((t) => t.code === 'wlo') }));
+  tideCat = { at: Date.now(), list };
+  return list;
+}
+const fold = (s) => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+async function tideSearch(q, lat, lon) {
+  const list = await tideCatalogue();
+  const near = fin(lat) && fin(lon);
+  const withDist = list.map((x) => ({ ...x, km: near ? Math.round(haversineKm(lat, lon, x.lat, x.lon)) : null }));
+  const f = fold(q).trim();
+  let hits = f ? withDist.filter((x) => fold(x.name).includes(f) || fold(x.alt).includes(f) || x.code === f.padStart(5, '0')) : withDist;
+  hits.sort((a, b) => (f ? (fold(a.name).startsWith(f) ? 0 : 1) - (fold(b.name).startsWith(f) ? 0 : 1) : 0) || (near ? a.km - b.km : a.name.localeCompare(b.name)));
+  return hits.slice(0, 25);
+}
+const TIDE_SAVED = path.join(DATA_DIR, 'tide-stations.json');
+
 // ---- HTTP ---------------------------------------------------------------------------------------------------------
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS', 'Access-Control-Allow-Headers': 'content-type, authorization' };
 function body(req) {
@@ -787,6 +811,15 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/history') return sendJson(res, await st.history(url.searchParams.get('range') || '24h'));
     if (p === '/api/tides') return sendJson(res, await tides(url.searchParams.get('station')));
+    if (p === '/api/tides/stations') return sendJson(res, await tideSearch(url.searchParams.get('q') || '', Number(url.searchParams.get('lat') ?? NaN), Number(url.searchParams.get('lon') ?? NaN)));
+    if (p === '/api/tides/saved' && req.method === 'GET') return sendJson(res, readJson(TIDE_SAVED, null));
+    if (p === '/api/tides/saved' && (req.method === 'PUT' || req.method === 'POST')) {
+      if (!AUTH.isAdmin(req)) return sendJson(res, { error: 'sign in to change the tide stations' }, 401);
+      const b = await body(req);
+      const list = (Array.isArray(b) ? b : []).filter((x) => x && /^[0-9a-f]{24}$/.test(x.id)).slice(0, 20).map((x) => ({ id: x.id, name: String(x.name || '').slice(0, 40) || 'Station' }));
+      writeJson(TIDE_SAVED, list);
+      return sendJson(res, list);
+    }
     if (p === '/api/auth') return sendJson(res, AUTH.status(req));
     if (p === '/api/login' && req.method === 'POST') {
       const r = await AUTH.login(req, (await body(req)).password);
@@ -805,7 +838,7 @@ const server = http.createServer(async (req, res) => {
       const rec = await send(st, { kind: 'test', priority: 'default', title: `✅ ${st.name}: test alert`, message: `${fmt(s.outT)} °C, wind ${fmt(s.wind, 0)} km/h gusting ${fmt(s.gust, 0)}, ${fmt(s.press)} hPa.` });
       return sendJson(res, { ok: true, sent: rec.sent ?? false, webhook: !!HA_WEBHOOK, ntfy: !!NTFY_URL });
     }
-    if (p === '/api') return sendJson(res, { service: 'ecowitt-monitor', endpoints: ['/api/status', '/api/stations', '/api/live?station=', '/api/history?station=&range=6h|24h|7d|30d|1y', '/api/settings', '/api/alerts', '/api/test-alert', '/api/tides?station=<IWLS id>', '/api/auth', '/api/login'] });
+    if (p === '/api') return sendJson(res, { service: 'ecowitt-monitor', endpoints: ['/api/status', '/api/stations', '/api/live?station=', '/api/history?station=&range=6h|24h|7d|30d|1y', '/api/settings', '/api/alerts', '/api/test-alert', '/api/tides?station=<IWLS id>', '/api/tides/stations?q=&lat=&lon=', '/api/tides/saved', '/api/auth', '/api/login'] });
     if (p === '/' || p === '/index.html') return sendFile(res, path.join(__dirname, 'web', 'index.html'));
     if (p === '/card-config.json') return sendFile(res, path.join(DATA_DIR, 'card.json'));
     const m = /^\/(web|dist)\/([\w.-]+)$/.exec(p);
