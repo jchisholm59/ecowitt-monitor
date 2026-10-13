@@ -1,0 +1,57 @@
+# Home Assistant automation: turns ecowitt-monitor's alerts into phone notifications (and optionally a spoken one).
+# 1. Settings -> Automations -> Create -> Edit in YAML, paste this.
+# 2. Replace YOUR_WEBHOOK_ID with a long random string, notify.mobile_app_YOUR_PHONE with your phone's notify
+#    service (Developer tools -> Actions, search "mobile_app"), and the watch / speaker lines (or delete them).
+# 3. In ecowitt-monitor's .env: HA_WEBHOOK=http://<your-ha>:8123/api/webhook/YOUR_WEBHOOK_ID
+# The alert's JSON: kind (gust, rainRate, rainDay, frost, heat, pressure, offline, battery, test), title, message,
+# priority (high / default), tag (the same for repeats of one kind at one station), station, stationName.
+alias: Weather alerts
+description: Alerts from ecowitt-monitor. What to alert on is set in the Ecowitt card's Alerts tab.
+mode: queued
+max: 10
+triggers:
+  - trigger: webhook
+    webhook_id: YOUR_WEBHOOK_ID
+    allowed_methods: [POST]
+    local_only: true
+conditions: []
+actions:
+  - variables:
+      icon: >-
+        {% set icons = {'gust': 'mdi:weather-windy', 'rainRate': 'mdi:weather-pouring', 'rainDay': 'mdi:umbrella',
+        'frost': 'mdi:snowflake', 'heat': 'mdi:thermometer-high', 'pressure': 'mdi:trending-down',
+        'offline': 'mdi:access-point-network-off', 'battery': 'mdi:battery-alert'} %}{{ icons.get(trigger.json.kind, 'mdi:weather-partly-cloudy') }}
+      spoken: >-
+        {{ trigger.json.title | regex_replace('^[^A-Za-z0-9]+', '') | replace(' km/h', ' kilometres an hour')
+        | replace(' mm/h', ' millimetres an hour') | replace(' mm', ' millimetres') | replace(' hPa', ' hectopascals') | replace(' °C', ' degrees') }}
+  - action: notify.mobile_app_YOUR_PHONE
+    data:
+      title: "{{ trigger.json.title }}"
+      message: "{{ trigger.json.message }}"
+      data:
+        tag: "{{ trigger.json.tag }}"
+        channel: Weather alerts
+        importance: "{{ 'high' if trigger.json.priority == 'high' else 'default' }}"
+        priority: high
+        ttl: 0
+        clickAction: /lovelace/weather   # your dashboard view with the card
+        notification_icon: "{{ icon }}"
+  # A Wear OS watch (remove if none).
+  - action: notify.mobile_app_YOUR_WATCH
+    continue_on_error: true
+    data:
+      title: "{{ trigger.json.title }}"
+      message: "{{ trigger.json.message }}"
+  # Spoken on a smart speaker during the day (remove if none).
+  - if:
+      - condition: time
+        after: "07:00:00"
+        before: "21:00:00"
+    then:
+      - action: tts.speak
+        continue_on_error: true
+        target:
+          entity_id: tts.google_en_com
+        data:
+          media_player_entity_id: media_player.YOUR_SPEAKER
+          message: "{{ spoken }}."

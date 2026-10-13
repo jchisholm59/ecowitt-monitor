@@ -1,0 +1,9 @@
+{
+  "name": "ecowitt-monitor",
+  "version": "1.0.0",
+  "description": "Ecowitt weather station(s) from Home Assistant: a dashboard, a Lovelace card, graphs up to a year and alerts",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=22" },
+  "license": "MIT"
+}
