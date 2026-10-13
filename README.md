@@ -17,11 +17,15 @@ own Home Assistant, switched with a button.
   this hour, today, this event, week, month and year; pressure with today's range and its 3-hour tendency (steady,
   rising, falling fast...); solar radiation, UV index on the WHO scale, light; inside temperature, humidity and dew
   point; sensor batteries.
+- **Lightning** (if that Home Assistant has the [Blitzortung](https://github.com/mrk-its/homeassistant-blitzortung)
+  integration, from HACS): the last hour's strikes plotted around the station (rings at 10, 25, 50 and 100 km, newest
+  brightest), strikes in the last 15 minutes and hour, the nearest and the latest, a strike-count graph, and a
+  "lightning within X km" alert.
 - **Graphs**: temperature (outside with its min-max band, inside), humidity, wind (average and gusts), rain (bars:
   30 min, hourly, 6-hourly, daily or weekly to suit) and pressure, over **6 h, 24 h, 7 d, 30 d or a year**. Touch or
   hover for values. History comes from Home Assistant's own statistics, so a year of graphs is there from day one.
 - **Alerts**: wind gusts, heavy rain, a wet day, frost, heat, pressure falling fast (a storm coming), a station gone
-  quiet, a low sensor battery. Thresholds and on/off on the card, per station; the same alert at most every few hours.
+  quiet, a low sensor battery, lightning nearby. Thresholds and on/off on the card, per station; the same alert at most every few hours.
   Sent to a Home Assistant webhook (phone, watch, a spoken announcement: see [`ha-automation.yaml`](ha-automation.yaml))
   and/or [ntfy](https://ntfy.sh).
 - **Home Assistant add-on**: on HA OS, add [`jchisholm59/ha-addons`](https://github.com/jchisholm59/ha-addons) to the

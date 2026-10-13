@@ -62,7 +62,7 @@ const FIELDS = {
   press: ['baromrelhpa', 'baromrelin'], pressAbs: ['baromabshpa', 'baromabsin'],
   solar: ['solarradiation'], uv: ['uv'], lux: ['solarradiation_lux'],
 };
-const UNIT = { outT: '°C', inT: '°C', feels: '°C', chill: '°C', dew: '°C', inDew: '°C', outH: '%', inH: '%', wind: 'km/h', gust: 'km/h', gustMax: 'km/h', dir: '°', rainRate: 'mm/h', rainEvent: 'mm', rainHour: 'mm', rainDay: 'mm', rainWeek: 'mm', rainMonth: 'mm', rainYear: 'mm', press: 'hPa', pressAbs: 'hPa', solar: 'W/m²', uv: '', lux: 'lx' };
+const UNIT = { lightning: 'strikes', outT: '°C', inT: '°C', feels: '°C', chill: '°C', dew: '°C', inDew: '°C', outH: '%', inH: '%', wind: 'km/h', gust: 'km/h', gustMax: 'km/h', dir: '°', rainRate: 'mm/h', rainEvent: 'mm', rainHour: 'mm', rainDay: 'mm', rainWeek: 'mm', rainMonth: 'mm', rainYear: 'mm', press: 'hPa', pressAbs: 'hPa', solar: 'W/m²', uv: '', lux: 'lx' };
 
 function toMetric(v, unit) {
   switch ((unit || '').toLowerCase()) {
@@ -84,6 +84,19 @@ function toMetric(v, unit) {
   }
 }
 
+const fin = Number.isFinite;
+const toKm = (v, unit) => (/mi/i.test(unit || '') ? v * 1.609344 : v);
+function haversineKm(la1, lo1, la2, lo2) {
+  const r = Math.PI / 180, dla = (la2 - la1) * r, dlo = (lo2 - lo1) * r;
+  const h = Math.sin(dla / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin(dlo / 2) ** 2;
+  return 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+function bearingDeg(la1, lo1, la2, lo2) {
+  const r = Math.PI / 180, y = Math.sin((lo2 - lo1) * r) * Math.cos(la2 * r);
+  const x = Math.cos(la1 * r) * Math.sin(la2 * r) - Math.sin(la1 * r) * Math.cos(la2 * r) * Math.cos((lo2 - lo1) * r);
+  return ((Math.atan2(y, x) / r) + 360) % 360;
+}
+
 // ---- stations ----------------------------------------------------------------------------------------------------
 // One or more stations, each read from its own Home Assistant. In .env either HA_URL / HA_TOKEN (one station), or
 // STATION_1_NAME, STATION_1_HA_URL, STATION_1_HA_TOKEN (STATION_1_ID to pick one of several stations in that HA),
@@ -103,7 +116,7 @@ const RANGES = {
   '30d': { ms: 30 * 864e5, period: 'hour', cache: 1800e3 },
   '1y': { ms: 365 * 864e5, period: 'day', cache: 3 * 3600e3 },
 };
-const SERIES = { outT: ['mean', 'min', 'max'], inT: ['mean', 'min', 'max'], outH: ['mean'], inH: ['mean'], wind: ['mean', 'max'], gust: ['max'], press: ['mean'], rainMonth: ['change'] };
+const SERIES = { outT: ['mean', 'min', 'max'], inT: ['mean', 'min', 'max'], outH: ['mean'], inH: ['mean'], wind: ['mean', 'max'], gust: ['max'], press: ['mean'], rainMonth: ['change'], lightning: ['change'] };
 
 class Station {
   constructor(cfg) {
@@ -128,6 +141,11 @@ class Station {
     this.histCache = new Map();
     this.todayCache = null;
     this.device = '';
+    this.home = null; // { lat, lon }: HA's home location, for the lightning bearings
+    this.blitz = null; // Blitzortung: { counter: entity_id } when that integration is set up in this HA
+    this.strikes = new Map(); // geo_location entity_id -> { t, lat, lon, km }
+    this.strikeLog = []; // [t, km, bearing] of every strike seen (last 3 h), kept after HA drops the entity
+    this.eventsId = 0;
   }
 
   call(msg, timeoutMs = 30000) {
@@ -158,6 +176,15 @@ class Station {
       return setTimeout(() => this.connect(), this.reconnectMs);
     }
     const ws = this.ws;
+    // A connection that never finishes (HA accepts it while still starting, then says nothing) is dropped after 30 s
+    // and retried; once connected, a ping every 30 s notices a connection that has silently died.
+    clearTimeout(this.openTimer);
+    this.openTimer = setTimeout(() => {
+      if (ws === this.ws && !this.connected) {
+        this.error = `Home Assistant at ${this.url} didn't answer`;
+        this.drop(ws);
+      }
+    }, 30000);
     ws.onmessage = async (ev) => {
       const m = JSON.parse(ev.data);
       if (m.type === 'auth_required') return ws.send(JSON.stringify({ type: 'auth', access_token: this.cfg.token }));
@@ -171,6 +198,14 @@ class Station {
         this.error = '';
         this.reconnectMs = 2000;
         log(`${this.name}: connected to Home Assistant ${m.ha_version} at ${this.url}`);
+        clearTimeout(this.openTimer);
+        clearInterval(this.pingTimer);
+        this.pingTimer = setInterval(() => {
+          this.call({ type: 'ping' }, 15000).catch(() => {
+            log(this.name + ': no answer to a ping; reconnecting');
+            this.drop(ws);
+          });
+        }, 30000);
         try {
           await this.setup();
         } catch (e) {
@@ -180,6 +215,7 @@ class Station {
         return;
       }
       if (m.type === 'event' && m.id === this.subId) return this.onEntities(m.event);
+      if (m.type === 'event' && m.id === this.eventsId) return this.onStateChanged(m.event);
       const p = this.pending.get(m.id);
       if (p) {
         this.pending.delete(m.id);
@@ -187,6 +223,9 @@ class Station {
       }
     };
     ws.onclose = () => {
+      if (ws !== this.ws) return; // an older connection
+      clearTimeout(this.openTimer);
+      clearInterval(this.pingTimer);
       if (this.connected) log(this.name + ': Home Assistant connection closed');
       this.connected = false;
       for (const p of this.pending.values()) p({ success: false, error: { message: 'connection closed' } });
@@ -197,6 +236,23 @@ class Station {
     ws.onerror = () => {
       this.error = `can't reach Home Assistant at ${this.url}`;
     };
+  }
+
+  // Give up on a connection: close it, and if it doesn't close within 5 s (a hung peer), carry on without it.
+  drop(ws) {
+    try {
+      ws.close();
+    } catch (e) {}
+    setTimeout(() => {
+      if (ws !== this.ws) return;
+      ws.onclose = ws.onmessage = ws.onerror = null;
+      this.ws = null;
+      this.connected = false;
+      clearInterval(this.pingTimer);
+      for (const p of this.pending.values()) p({ success: false, error: { message: 'connection dropped' } });
+      this.pending.clear();
+      this.connect();
+    }, 5000);
   }
 
   async setup() {
@@ -222,6 +278,20 @@ class Station {
     const subscribe = [...Object.values(this.sensors), ...this.batteries.map((b) => b.entity_id)];
     this.subId = this.wsId++;
     this.ws.send(JSON.stringify({ id: this.subId, type: 'subscribe_entities', entity_ids: subscribe }));
+    // Lightning, from the Blitzortung integration (HACS) if this HA has it: one geo_location entity per recent strike
+    // (state = distance, attributes latitude / longitude / publication_date), followed through state_changed events.
+    const cfg = await this.call({ type: 'get_config' });
+    this.home = { lat: cfg.latitude, lon: cfg.longitude };
+    const bl = reg.filter((e) => e.platform === 'blitzortung' && !e.disabled_by);
+    const counter = bl.find((e) => /-counter$/.test(e.unique_id));
+    this.blitz = bl.length ? { counter: counter?.entity_id || null } : null;
+    if (this.blitz) {
+      const states = await this.call({ type: 'get_states' });
+      for (const st of states) if (st.entity_id.startsWith('geo_location.') && st.attributes.source === 'blitzortung') this.addStrike(st.entity_id, st);
+      this.eventsId = this.wsId++;
+      this.ws.send(JSON.stringify({ id: this.eventsId, type: 'subscribe_events', event_type: 'state_changed' }));
+      log(`${this.name}: Blitzortung lightning, ${this.strikes.size} recent strikes`);
+    }
     this.histCache.clear();
     this.todayCache = null;
     await this.seedPressure().catch((e) => log(this.name + ': pressure history:', e.message));
@@ -308,19 +378,20 @@ class Station {
     if (!R) throw new Error('range must be one of ' + Object.keys(RANGES).join(', '));
     const c = this.histCache.get(range);
     if (c && Date.now() - c.at < R.cache) return c.data;
-    const keys = Object.keys(SERIES).filter((k) => this.sensors[k]);
+    const sens = { ...this.sensors, ...(this.blitz?.counter ? { lightning: this.blitz.counter } : {}) };
+    const keys = Object.keys(SERIES).filter((k) => sens[k]);
     const end = Date.now(), start = end - R.ms;
     const r = await this.call({
       type: 'recorder/statistics_during_period', start_time: new Date(start).toISOString(), end_time: new Date(end).toISOString(),
-      statistic_ids: keys.map((k) => this.sensors[k]), period: R.period, types: ['mean', 'min', 'max', 'change'],
+      statistic_ids: keys.map((k) => sens[k]), period: R.period, types: ['mean', 'min', 'max', 'change'],
     }, 60000);
-    const t = [...new Set(keys.flatMap((k) => (r[this.sensors[k]] || []).map((x) => x.start)))].sort((a, b) => a - b);
+    const t = [...new Set(keys.flatMap((k) => (r[sens[k]] || []).map((x) => x.start)))].sort((a, b) => a - b);
     const idx = new Map(t.map((x, i) => [x, i]));
     const series = {};
     for (const k of keys) {
-      const u = this.units[this.sensors[k]];
+      const u = this.units[sens[k]];
       const out = Object.fromEntries(SERIES[k].map((f) => [f, new Array(t.length).fill(null)]));
-      for (const x of r[this.sensors[k]] || []) {
+      for (const x of r[sens[k]] || []) {
         const i = idx.get(x.start);
         for (const f of SERIES[k]) if (Number.isFinite(x[f])) out[f][i] = f === 'change' && x[f] < 0 ? 0 : Math.round(toMetric(x[f], u) * 100) / 100;
       }
@@ -355,6 +426,44 @@ class Station {
     return out;
   }
 
+  onStateChanged(ev) {
+    const eid = ev?.data?.entity_id;
+    if (!eid || !eid.startsWith('geo_location.')) return;
+    const ns = ev.data.new_state;
+    if (!ns) return void this.strikes.delete(eid);
+    if (ns.attributes?.source === 'blitzortung') this.addStrike(eid, ns, true);
+  }
+
+  addStrike(eid, st, live) {
+    const a = st.attributes;
+    if (!fin(a.latitude) || !fin(a.longitude)) return;
+    const t = a.publication_date ? Date.parse(a.publication_date) : Date.now();
+    const km = this.home ? haversineKm(this.home.lat, this.home.lon, a.latitude, a.longitude) : toKm(Number(st.state), a.unit_of_measurement);
+    const brg = this.home ? bearingDeg(this.home.lat, this.home.lon, a.latitude, a.longitude) : null;
+    const known = this.strikes.has(eid);
+    this.strikes.set(eid, { t, lat: a.latitude, lon: a.longitude, km });
+    if (!known) {
+      this.strikeLog.push([t, Math.round(km * 10) / 10, brg === null ? null : Math.round(brg)]);
+      this.strikeLog.sort((x, y) => x[0] - y[0]);
+      while (this.strikeLog.length && Date.now() - this.strikeLog[0][0] > 3 * 3600e3) this.strikeLog.shift();
+      if (live) checkLightning(this, km, brg);
+    }
+  }
+
+  lightning() {
+    if (!this.blitz) return null;
+    const now = Date.now();
+    const recent = this.strikeLog.filter((x) => now - x[0] <= 3600e3);
+    const in15 = recent.filter((x) => now - x[0] <= 900e3);
+    const near = (a) => a.reduce((b, x) => (!b || x[1] < b[1] ? x : b), null);
+    const last = this.strikeLog[this.strikeLog.length - 1] || null;
+    const fmt = (x) => (x ? { t: x[0], km: x[1], bearing: x[2] } : null);
+    return {
+      count15: in15.length, count60: recent.length, nearest15: fmt(near(in15)), nearest60: fmt(near(recent)), last: fmt(last),
+      strikes: recent.slice(-400).map((x) => [Math.round((now - x[0]) / 1000), x[1], x[2]]),
+    };
+  }
+
   snapshot() {
     return {
       station: this.id, name: this.name, device: this.device, ha: this.connected, error: this.error || null,
@@ -363,6 +472,7 @@ class Station {
       units: Object.fromEntries(Object.keys(this.sensors).map((k) => [k, UNIT[k]])),
       pressTrend3h: this.pressTrend(),
       batteries: this.batteries.map((b) => ({ name: b.name, low: !!this.batteryLow[b.entity_id] })),
+      lightning: this.lightning(),
     };
   }
 }
@@ -384,6 +494,7 @@ const DEFAULTS = {
   pressure: { on: true, hpa: 4 }, // pressure falling this much in 3 hours (a storm coming)
   offline: { on: true, min: 20 }, // no readings from the station for this long
   battery: { on: true }, // a sensor reports a low battery
+  lightning: { on: true, km: 25 }, // a lightning strike this close (Blitzortung)
   cooldownHours: 6, // the same alert at most this often
 };
 let settings = mergeSettings(DEFAULTS, readJson(SETTINGS_FILE, {}));
@@ -419,7 +530,9 @@ const compass = (deg) => (Number.isFinite(deg) ? COMPASS[Math.round(deg / 22.5) 
 function rule(st, kind, cond, clear, make) {
   const key = `${st.id}:${kind}`;
   const s = (state[key] ||= { armed: true, firedAt: 0 });
-  if (cond && s.armed && Date.now() - s.firedAt >= settings.cooldownHours * 3600e3) {
+  // Lightning re-arms after 30 quiet minutes, so a later storm alerts again: its cooldown is at most an hour.
+  const cool = (kind === 'lightning' ? Math.min(1, settings.cooldownHours) : settings.cooldownHours) * 3600e3;
+  if (cond && s.armed && Date.now() - s.firedAt >= cool) {
     s.armed = false;
     s.firedAt = Date.now();
     saveState();
@@ -485,6 +598,28 @@ function check(st) {
         kind: 'battery', priority: 'default', title: `🔋 ${st.name}: ${b.name} low`, message: 'Time to change the batteries in that sensor.',
       }));
 }
+
+// Lightning: on every new strike within the distance; re-arms after 30 minutes with none that close.
+function checkLightning(st, km, brg) {
+  if (!settings.lightning.on || settings.stations[st.id] === false) return;
+  const at = STATIONS.length > 1 ? ` at ${st.name}` : '';
+  const L = st.lightning();
+  rule(st, 'lightning', km <= settings.lightning.km, false, () => ({
+    kind: 'lightning', priority: 'high', title: `⚡ Lightning ${fmt(km, 0)} km ${compass(brg)}${at}`,
+    message: `${L.count15} strike${L.count15 === 1 ? '' : 's'} within ${STRIKE_RADIUS_TEXT} in the last 15 minutes, ${L.count60} in the last hour.`,
+  }));
+}
+const STRIKE_RADIUS_TEXT = '100 km';
+setInterval(() => {
+  for (const st of STATIONS) {
+    if (!st.blitz) continue;
+    const s = state[`${st.id}:lightning`];
+    if (s && !s.armed && !st.strikeLog.some((x) => Date.now() - x[0] < 30 * 60e3 && x[1] <= settings.lightning.km)) {
+      s.armed = true;
+      saveState();
+    }
+  }
+}, 60e3);
 
 // A station going quiet: checked every minute (no updates means no events to trigger a check).
 setInterval(() => {

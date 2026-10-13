@@ -51,6 +51,7 @@ const ALERT_ROWS = [
   ["pressure", "Pressure falling fast", "mdi:trending-down", [["hpa", "hPa drop in 3 h", 1, 20, 0.5]]],
   ["offline", "Station gone quiet", "mdi:access-point-network-off", [["min", "minutes without data", 5, 1440, 5]]],
   ["battery", "Low sensor battery", "mdi:battery-alert", []],
+  ["lightning", "Lightning nearby", "mdi:flash", [["km", "km or closer", 1, 100, 1]]],
 ];
 
 const STYLE = `
@@ -92,6 +93,10 @@ const STYLE = `
   .rainrows .bar i { display: block; height: 100%; background: var(--ec-rain); border-radius: 3px; }
   .rainrows span:first-child { color: var(--secondary-text-color); }
   .warn { color: var(--ec-bad); font-weight: 500; }
+  .lt { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .lt svg { width: 190px; height: 190px; flex: none; }
+  .lt .kv { flex: 1; min-width: 150px; max-width: 460px; }
+  .panel.wide { grid-column: 1 / -1; }
   .ranges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
   .ranges button { border: 1px solid var(--divider-color); background: var(--card-background-color, transparent); color: var(--primary-text-color); font: inherit;
                    padding: 6px 14px; border-radius: 999px; cursor: pointer; }
@@ -328,7 +333,40 @@ class EcowittCard extends HTMLElement {
         ${hilo("inT", "°")}
         <div class="kv"><span>Humidity</span><b>${f0(v.inH)} %</b><span>Dew point</span><b>${f1(v.inDew)} °C</b>
           ${(L.batteries || []).length ? `<span>Batteries</span><b class="${low.length ? "warn" : ""}">${low.length ? esc(low.map((b) => b.name.replace(/ battery/i, "")).join(", ")) + " low" : "OK"}</b>` : ""}</div></div>
+      ${L.lightning ? this._lightningPanel(L.lightning) : ""}
     </div>`;
+  }
+
+  // Lightning (Blitzortung): the last hour's strikes around the station, newest brightest, with rings at 10, 25, 50
+  // and 100 km, and the nearest / latest strike and counts beside it.
+  _lightningPanel(Lt) {
+    const ago = (t) => {
+      const s = Math.round((Date.now() - t) / 1000);
+      return s < 90 ? `${s} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
+    };
+    const where = (x) => (x ? `${f0(x.km)} km ${compass(x.bearing)}, ${ago(x.t)}` : "–");
+    const R = 86, C = 95, MAX = 100;
+    const rr = (km) => (Math.sqrt(Math.min(km, MAX) / MAX) * R); // square-root scale: close strikes get more room
+    let s = "";
+    for (const km of [10, 25, 50, 100]) s += `<circle cx="${C}" cy="${C}" r="${rr(km)}" fill="none" stroke="var(--divider-color)" stroke-width="1"/><text x="${C + 3}" y="${C - rr(km) + 11}" style="font-size:9px;fill:var(--secondary-text-color)">${km}</text>`;
+    s += `<line x1="${C}" y1="${C - R}" x2="${C}" y2="${C + R}" stroke="var(--divider-color)"/><line x1="${C - R}" y1="${C}" x2="${C + R}" y2="${C}" stroke="var(--divider-color)"/>`;
+    s += `<text x="${C}" y="10" text-anchor="middle" style="font-size:10px;font-weight:600;fill:var(--ec-bad)">N</text>`;
+    for (const [age, km, b] of [...(Lt.strikes || [])].sort((a, b) => b[0] - a[0])) {
+      if (!fin(b)) continue;
+      const a = (b * Math.PI) / 180, r = rr(km);
+      const col = age < 300 ? "#ffee58" : age < 900 ? "#ffa726" : "#8d6e63";
+      s += `<circle cx="${(C + r * Math.sin(a)).toFixed(1)}" cy="${(C - r * Math.cos(a)).toFixed(1)}" r="${age < 300 ? 3.2 : 2.4}" fill="${col}" opacity="${age < 900 ? 0.95 : 0.6}"/>`;
+    }
+    s += `<circle cx="${C}" cy="${C}" r="4" fill="var(--primary-color)"/>`;
+    const quiet = !Lt.count60;
+    return `<div class="panel wide"><div class="ph"><ha-icon icon="mdi:flash"></ha-icon>Lightning <span style="text-transform:none;letter-spacing:0">· Blitzortung, within 100 km</span></div>
+      <div class="lt"><svg viewBox="0 0 190 190">${s}</svg>
+        <div class="kv">
+          ${quiet ? `<span>Last hour</span><b>No strikes</b>` : `<span>Last 15 min</span><b>${Lt.count15} strike${Lt.count15 === 1 ? "" : "s"}</b><span>Last hour</span><b>${Lt.count60} strike${Lt.count60 === 1 ? "" : "s"}</b>`}
+          <span>Nearest, 15 min</span><b>${where(Lt.nearest15)}</b>
+          <span>Nearest, hour</span><b>${where(Lt.nearest60)}</b>
+          <span>Latest</span><b>${Lt.last ? where(Lt.last) : "none in the last 3 h"}</b>
+          <span></span><b class="sub" style="font-weight:400">${quiet ? "" : `<span style="color:#ffee58">●</span> under 5 min <span style="color:#ffa726">●</span> 15 min <span style="color:#8d6e63">●</span> older`}</b></div></div></div>`;
   }
 
   // A compass rose with an arrow pointing the way the wind is blowing (it comes from `dir`).
@@ -410,6 +448,10 @@ class EcowittCard extends HTMLElement {
       const bars = this._rainBars(h);
       defs.push({ title: "Rain", unit: "mm", d: 1, zero: true, bars, summary: `${f1(bars.total)} mm in all` });
     }
+    if (S.lightning && S.lightning.change.some((x) => x > 0)) {
+      const bars = this._rainBars(h, "lightning");
+      defs.push({ title: "Lightning", unit: "strikes", d: 0, zero: true, bars, color: "#ffca28", summary: `${f0(bars.total)} strikes within 100 km` });
+    }
     if (S.press) defs.push({ title: "Pressure", unit: "hPa", d: 1, lines: [{ name: "Sea level", color: "var(--ec-press)", y: S.press.mean }] });
     box.innerHTML = `<div class="charts">${defs.map((c, i) => `<div class="chart" data-i="${i}"><h4>${esc(c.title)}
         ${(c.lines || []).map((l) => `<span class="lg"><i style="background:${l.color}"></i>${esc(l.name)}</span>`).join("")}
@@ -419,12 +461,12 @@ class EcowittCard extends HTMLElement {
 
   // Rain as bars of a sensible size for the range: 30 min for 6 h, hourly for 24 h, 6-hourly for 7 d, daily for
   // 30 d, weekly for a year (from the monthly total's change per bucket).
-  _rainBars(h) {
+  _rainBars(h, key = "rainMonth") {
     const step = { "6h": 1800e3, "24h": 3600e3, "7d": 6 * 3600e3, "30d": 864e5, "1y": 7 * 864e5 }[h.range];
     const off = new Date().getTimezoneOffset() * 60e3; // buckets on local boundaries
     const map = new Map();
     h.t.forEach((x, i) => {
-      const c = h.series.rainMonth.change[i];
+      const c = h.series[key].change[i];
       if (!fin(c)) return;
       const b = Math.floor((x - off) / step) * step + off;
       map.set(b, (map.get(b) || 0) + c);
@@ -469,7 +511,7 @@ class EcowittCard extends HTMLElement {
     if (c.bars) {
       const bw = Math.max(1, ((c.bars.step / (x1 - x0)) * (W - L - R)) * 0.75);
       c.bars.y.forEach((v, i) => {
-        if (fin(v) && v > 0) s += `<rect x="${X(c.bars.t[i]) - bw / 2}" y="${Y(v)}" width="${bw}" height="${Math.max(1, Y(0) - Y(v))}" rx="${Math.min(3, bw / 3)}" fill="var(--ec-rain)"/>`;
+        if (fin(v) && v > 0) s += `<rect x="${X(c.bars.t[i]) - bw / 2}" y="${Y(v)}" width="${bw}" height="${Math.max(1, Y(0) - Y(v))}" rx="${Math.min(3, bw / 3)}" fill="${c.color || "var(--ec-rain)"}"/>`;
       });
     }
     for (const l of c.lines || []) {
@@ -499,7 +541,7 @@ class EcowittCard extends HTMLElement {
       let rows = "";
       if (c.bars) {
         const a = tt[i] - c.bars.step / 2;
-        rows = `<b>${f1(c.bars.y[i] ?? 0)} mm</b> <span style="opacity:.7">${fmtRange(a, a + c.bars.step, h.range)}</span>`;
+        rows = `<b>${f1(c.bars.y[i] ?? 0, c.d)} ${c.unit}</b> <span style="opacity:.7">${fmtRange(a, a + c.bars.step, h.range)}</span>`;
       } else {
         rows = `<div style="opacity:.7">${fmtT(tt[i])}</div>` + c.lines.map((l) => `<div><span style="color:${l.color}">●</span> ${esc(l.name)} <b>${f1(l.y[i], c.d)} ${c.unit}</b>${l.band && fin(l.band[0][i]) ? ` <span style="opacity:.7">(${f1(l.band[0][i], c.d)} – ${f1(l.band[1][i], c.d)})</span>` : ""}</div>`).join("");
       }
