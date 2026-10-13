@@ -86,8 +86,8 @@ the monitor behind https too.
 | `GET / PUT /api/settings` | alert settings (partial updates; with `ADMIN_PASSWORD`, sign in to change) |
 | `GET /api/alerts` | the last 100 alerts |
 | `POST /api/test-alert?station=` | send a test |
-| `GET /api/tides?station=<IWLS id>` | a relay for Canadian Hydrographic Service tide predictions (15-minute curve, highs and lows, observed level), cached 30 min. CHS's certificate is from Entrust, which browsers no longer trust, so a browser card can't call CHS itself |
-| `GET /api/tides/stations?q=&lat=&lon=` | search CHS stations with predictions by name or code, nearest first (catalogue cached 6 h) |
+| `GET /api/tides?station=` | a relay for the Tides card (`tides.js`, shared with ais-monitor): `<CHS id>` (Canada), `noaa:<id>` (US) or `geo:<lat>,<lon>` (a tide model anywhere: WorldTides with `WORLDTIDES_KEY`, else Open-Meteo), with the place's time zone. Browsers can't call CHS themselves (its certificate is from Entrust, which they no longer trust) |
+| `GET /api/tides/stations?q=&lat=&lon=` | search CHS and NOAA stations by name or code (nearest first), and places by name or `lat, lon` for the tide model |
 | `GET / PUT /api/tides/saved` | a tide card's saved station list `[{id, name}]` (with `ADMIN_PASSWORD`, sign in to change) |
 
 ## License
