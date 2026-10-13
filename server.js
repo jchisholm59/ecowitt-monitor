@@ -685,6 +685,49 @@ async function sendNtfy(alert) {
   }
 }
 
+// ---- tides (Canadian Hydrographic Service) --------------------------------------------------------------------------
+// A relay for the Tides card: CHS's IWLS API (free, no key) has a certificate from Entrust, which browsers stopped
+// trusting for certificates issued after late 2024, so the card can't call it directly. Node can. One request per
+// station returns its details, the 15-minute predictions (26 h back, so all of today, to 7.5 days ahead), the highs and lows, and the
+// gauge's observed level for the last 8 h when it has one. Cached 30 minutes (10 for the observations).
+const IWLS = 'https://api-iwls.dfo-mpo.gc.ca/api/v1/stations';
+const tideCache = new Map(); // station -> { at, obsAt, data }
+async function iwls(path) {
+  const ctl = new AbortController();
+  const to = setTimeout(() => ctl.abort(), 20000);
+  try {
+    const r = await fetch(`${IWLS}/${path}`, { signal: ctl.signal });
+    if (!r.ok) throw new Error(`CHS HTTP ${r.status}`);
+    return await r.json();
+  } finally {
+    clearTimeout(to);
+  }
+}
+async function tides(id) {
+  if (!/^[0-9a-f]{24}$/.test(id || '')) throw new Error('station must be an IWLS station id (24 hex characters)');
+  const c = tideCache.get(id), now = Date.now();
+  if (c && now - c.at < 30 * 60e3 && now - c.obsAt < 10 * 60e3) return c.data;
+  const iso = (t) => new Date(t).toISOString().replace(/\.\d+Z$/, 'Z');
+  const q = (code, from, to, res) => iwls(`${id}/data?time-series-code=${code}&from=${iso(from)}&to=${iso(to)}${res ? '&resolution=' + res : ''}`);
+  const fresh = !c || now - c.at >= 30 * 60e3;
+  const [meta, curve, hilo, obs] = await Promise.all([
+    c?.data.meta || iwls(id).then((m) => ({ code: m.code, name: m.officialName, latitude: m.latitude, longitude: m.longitude, series: (m.timeSeries || []).map((t) => t.code) })),
+    fresh ? q('wlp', now - 26 * 3600e3, now + 7.5 * 864e5, 'FIFTEEN_MINUTES') : null,
+    fresh ? q('wlp-hilo', now - 1.5 * 864e5, now + 8 * 864e5) : null,
+    q('wlo', now - 8 * 3600e3, now).catch(() => []),
+  ]);
+  const pts = (a) => (Array.isArray(a) ? a : []).map((x) => [Date.parse(x.eventDate), x.value]).filter((x) => fin(x[1]));
+  const data = {
+    meta,
+    curve: fresh ? pts(curve) : c.data.curve,
+    events: fresh ? pts(hilo) : c.data.events,
+    obs: pts(obs),
+    fetched: now,
+  };
+  tideCache.set(id, { at: fresh ? now : c.at, obsAt: now, data });
+  return data;
+}
+
 // ---- HTTP ---------------------------------------------------------------------------------------------------------
 const CORS = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, PUT, POST, OPTIONS', 'Access-Control-Allow-Headers': 'content-type, authorization' };
 function body(req) {
@@ -743,6 +786,7 @@ const server = http.createServer(async (req, res) => {
       return sendJson(res, { ...st.snapshot(), today: t, stations: STATIONS.map((x) => ({ id: x.id, name: x.name })) });
     }
     if (p === '/api/history') return sendJson(res, await st.history(url.searchParams.get('range') || '24h'));
+    if (p === '/api/tides') return sendJson(res, await tides(url.searchParams.get('station')));
     if (p === '/api/auth') return sendJson(res, AUTH.status(req));
     if (p === '/api/login' && req.method === 'POST') {
       const r = await AUTH.login(req, (await body(req)).password);
@@ -761,7 +805,7 @@ const server = http.createServer(async (req, res) => {
       const rec = await send(st, { kind: 'test', priority: 'default', title: `✅ ${st.name}: test alert`, message: `${fmt(s.outT)} °C, wind ${fmt(s.wind, 0)} km/h gusting ${fmt(s.gust, 0)}, ${fmt(s.press)} hPa.` });
       return sendJson(res, { ok: true, sent: rec.sent ?? false, webhook: !!HA_WEBHOOK, ntfy: !!NTFY_URL });
     }
-    if (p === '/api') return sendJson(res, { service: 'ecowitt-monitor', endpoints: ['/api/status', '/api/stations', '/api/live?station=', '/api/history?station=&range=6h|24h|7d|30d|1y', '/api/settings', '/api/alerts', '/api/test-alert', '/api/auth', '/api/login'] });
+    if (p === '/api') return sendJson(res, { service: 'ecowitt-monitor', endpoints: ['/api/status', '/api/stations', '/api/live?station=', '/api/history?station=&range=6h|24h|7d|30d|1y', '/api/settings', '/api/alerts', '/api/test-alert', '/api/tides?station=<IWLS id>', '/api/auth', '/api/login'] });
     if (p === '/' || p === '/index.html') return sendFile(res, path.join(__dirname, 'web', 'index.html'));
     if (p === '/card-config.json') return sendFile(res, path.join(DATA_DIR, 'card.json'));
     const m = /^\/(web|dist)\/([\w.-]+)$/.exec(p);

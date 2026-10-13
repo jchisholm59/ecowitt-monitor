@@ -86,6 +86,7 @@ the monitor behind https too.
 | `GET / PUT /api/settings` | alert settings (partial updates; with `ADMIN_PASSWORD`, sign in to change) |
 | `GET /api/alerts` | the last 100 alerts |
 | `POST /api/test-alert?station=` | send a test |
+| `GET /api/tides?station=<IWLS id>` | a relay for Canadian Hydrographic Service tide predictions (15-minute curve, highs and lows, observed level), cached 30 min. CHS's certificate is from Entrust, which browsers no longer trust, so a browser card can't call CHS itself |
 
 ## License
 MIT
