@@ -93,9 +93,18 @@ const STYLE = `
   .rainrows .bar i { display: block; height: 100%; background: var(--ec-rain); border-radius: 3px; }
   .rainrows span:first-child { color: var(--secondary-text-color); }
   .warn { color: var(--ec-bad); font-weight: 500; }
-  .lt { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
-  .lt svg { width: 190px; height: 190px; flex: none; }
-  .lt .kv { flex: 1; min-width: 150px; max-width: 460px; }
+  .lt { display: flex; gap: 16px; align-items: flex-start; flex-wrap: wrap; }
+  .lt .kv { flex: 0 0 auto; min-width: 250px; max-width: 420px; margin-top: 0; }
+  .lt .kv span, .lt .kv b { white-space: nowrap; }
+  .ltmap { position: relative; flex: 2 1 420px; height: 420px; border-radius: 12px; overflow: hidden; background: #0b1a2a; min-width: 0; }
+  .ltmap .tiles img { position: absolute; left: 0; top: 0; width: 256px; height: 256px; user-select: none; pointer-events: none; }
+  .ltmap svg.ov { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .ltmap .zoom { position: absolute; right: 8px; top: 8px; display: flex; gap: 4px; }
+  .ltmap .zoom button { border: none; border-radius: 8px; padding: 5px 9px; font: inherit; font-size: .8em; cursor: pointer;
+                        background: rgba(0,0,0,.6); color: #fff; }
+  .ltmap .zoom button.on { background: var(--primary-color); }
+  .ltmap .attr { position: absolute; right: 6px; bottom: 4px; font-size: 10px; color: rgba(255,255,255,.8); text-shadow: 0 0 3px #000; }
+  @media (max-width: 640px) { .ltmap { height: 320px; flex-basis: 100%; } }
   .panel.wide { grid-column: 1 / -1; }
   .ranges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 10px; }
   .ranges button { border: 1px solid var(--divider-color); background: var(--card-background-color, transparent); color: var(--primary-text-color); font: inherit;
@@ -335,6 +344,7 @@ class EcowittCard extends HTMLElement {
           ${(L.batteries || []).length ? `<span>Batteries</span><b class="${low.length ? "warn" : ""}">${low.length ? esc(low.map((b) => b.name.replace(/ battery/i, "")).join(", ")) + " low" : "OK"}</b>` : ""}</div></div>
       ${L.lightning ? this._lightningPanel(L.lightning) : ""}
     </div>`;
+    if (L.lightning) this._mountLtMap(L.lightning);
   }
 
   // Lightning (Blitzortung): the last hour's strikes around the station, newest brightest, with rings at 10, 25, 50
@@ -345,28 +355,106 @@ class EcowittCard extends HTMLElement {
       return s < 90 ? `${s} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
     };
     const where = (x) => (x ? `${f0(x.km)} km ${compass(x.bearing)}, ${ago(x.t)}` : "–");
-    const R = 86, C = 95, MAX = 100;
-    const rr = (km) => (Math.sqrt(Math.min(km, MAX) / MAX) * R); // square-root scale: close strikes get more room
-    let s = "";
-    for (const km of [10, 25, 50, 100]) s += `<circle cx="${C}" cy="${C}" r="${rr(km)}" fill="none" stroke="var(--divider-color)" stroke-width="1"/><text x="${C + 3}" y="${C - rr(km) + 11}" style="font-size:9px;fill:var(--secondary-text-color)">${km}</text>`;
-    s += `<line x1="${C}" y1="${C - R}" x2="${C}" y2="${C + R}" stroke="var(--divider-color)"/><line x1="${C - R}" y1="${C}" x2="${C + R}" y2="${C}" stroke="var(--divider-color)"/>`;
-    s += `<text x="${C}" y="10" text-anchor="middle" style="font-size:10px;font-weight:600;fill:var(--ec-bad)">N</text>`;
-    for (const [age, km, b] of [...(Lt.strikes || [])].sort((a, b) => b[0] - a[0])) {
-      if (!fin(b)) continue;
-      const a = (b * Math.PI) / 180, r = rr(km);
-      const col = age < 300 ? "#ffee58" : age < 900 ? "#ffa726" : "#8d6e63";
-      s += `<circle cx="${(C + r * Math.sin(a)).toFixed(1)}" cy="${(C - r * Math.cos(a)).toFixed(1)}" r="${age < 300 ? 3.2 : 2.4}" fill="${col}" opacity="${age < 900 ? 0.95 : 0.6}"/>`;
-    }
-    s += `<circle cx="${C}" cy="${C}" r="4" fill="var(--primary-color)"/>`;
     const quiet = !Lt.count60;
-    return `<div class="panel wide"><div class="ph"><ha-icon icon="mdi:flash"></ha-icon>Lightning <span style="text-transform:none;letter-spacing:0">· Blitzortung, within 100 km</span></div>
-      <div class="lt"><svg viewBox="0 0 190 190">${s}</svg>
+    return `<div class="panel wide"><div class="ph"><ha-icon icon="mdi:flash"></ha-icon>Lightning <span style="text-transform:none;letter-spacing:0">· Blitzortung, within 100 km of the station's home location</span></div>
+      <div class="lt"><div id="ltmap-slot" class="ltmap"></div>
         <div class="kv">
           ${quiet ? `<span>Last hour</span><b>No strikes</b>` : `<span>Last 15 min</span><b>${Lt.count15} strike${Lt.count15 === 1 ? "" : "s"}</b><span>Last hour</span><b>${Lt.count60} strike${Lt.count60 === 1 ? "" : "s"}</b>`}
           <span>Nearest, 15 min</span><b>${where(Lt.nearest15)}</b>
           <span>Nearest, hour</span><b>${where(Lt.nearest60)}</b>
           <span>Latest</span><b>${Lt.last ? where(Lt.last) : "none in the last 3 h"}</b>
-          <span></span><b class="sub" style="font-weight:400">${quiet ? "" : `<span style="color:#ffee58">●</span> under 5 min <span style="color:#ffa726">●</span> 15 min <span style="color:#8d6e63">●</span> older`}</b></div></div></div>`;
+          <span></span><b class="sub" style="font-weight:400">${quiet ? "" : `<span style="color:#ffee58">⚡</span> 5 min <span style="color:#ffa726">●</span> 15 min <span style="color:#ff5252">●</span> 1 h`}</b></div></div></div>`;
+  }
+
+  // The lightning map: Esri World Imagery (free, no key) with place names, centred on the station's Home Assistant
+  // home location, range rings and the strikes drawn over it. The map element is kept between repaints (moved into the
+  // new panel), so tiles don't reload every 15 s; only the overlay is redrawn.
+  _mountLtMap(Lt) {
+    const slot = this.shadowRoot.getElementById("ltmap-slot");
+    if (!slot || !Lt.home) return;
+    if (!this._ltEl) {
+      this._ltEl = document.createElement("div");
+      this._ltEl.style.cssText = "position:absolute;inset:0";
+      this._ltEl.innerHTML = `<div class="tiles"></div><svg class="ov"></svg>
+        <div class="zoom">${[25, 50, 100].map((k) => `<button data-km="${k}">${k} km</button>`).join("")}</div><div class="attr">Imagery © Esri, Maxar, Earthstar Geographics</div>`;
+      this._ltEl.querySelector(".zoom").addEventListener("click", (e) => {
+        const b = e.target.closest("[data-km]");
+        if (!b) return;
+        this._ltKm = Number(b.dataset.km);
+        store.set("ltkm", this._ltKm);
+        this._drawLtMap();
+      });
+      this._ltKm = Number(store.get("ltkm", 100)) || 100;
+      new ResizeObserver(() => this._drawLtMap()).observe(this._ltEl);
+    }
+    slot.appendChild(this._ltEl);
+    this._lt = Lt;
+    requestAnimationFrame(() => this._drawLtMap());
+  }
+
+  _drawLtMap() {
+    const el = this._ltEl, Lt = this._lt;
+    if (!el || !Lt?.home || !el.isConnected) return;
+    const W = el.clientWidth, H = el.clientHeight;
+    if (!W || !H) return;
+    const { lat, lon } = Lt.home;
+    // Web Mercator: world pixel coordinates at zoom z.
+    const wx = (lo, z) => ((lo + 180) / 360) * 256 * 2 ** z;
+    const wy = (la, z) => ((1 - Math.log(Math.tan((la * Math.PI) / 180) + 1 / Math.cos((la * Math.PI) / 180)) / Math.PI) / 2) * 256 * 2 ** z;
+    const mpp0 = 156543.03392 * Math.cos((lat * Math.PI) / 180); // metres per pixel at zoom 0
+    const want = ((Math.min(W, H) / 2) * 0.94 * mpp0) / (this._ltKm * 1000);
+    // A fractional zoom (zf) so the chosen range fills the map; tiles come from the nearest whole zoom (z), scaled.
+    const zf = Math.max(3, Math.min(14, Math.log2(want))), z = Math.round(zf);
+    const mpp = mpp0 / 2 ** zf, cx = wx(lon, zf), cy = wy(lat, zf);
+    const P = (la, lo) => [wx(lo, zf) - cx + W / 2, wy(la, zf) - cy + H / 2];
+    // Tiles: imagery, then the boundaries-and-places labels on top.
+    const box = el.querySelector(".tiles"), keep = new Set(), n = 2 ** z, T = (256 * 2 ** zf) / n; // T: a tile's size on screen
+    this._ltTiles ||= new Map();
+    const tx0 = Math.floor((cx - W / 2) / T), tx1 = Math.floor((cx + W / 2) / T);
+    const ty0 = Math.max(0, Math.floor((cy - H / 2) / T)), ty1 = Math.min(n - 1, Math.floor((cy + H / 2) / T));
+    for (const layer of ["World_Imagery", "Reference/World_Boundaries_and_Places"])
+      for (let tx = tx0; tx <= tx1; tx++)
+        for (let ty = ty0; ty <= ty1; ty++) {
+          const k = `${layer}/${z}/${tx}/${ty}`;
+          keep.add(k);
+          let img = this._ltTiles.get(k);
+          if (!img) {
+            img = document.createElement("img");
+            img.alt = "";
+            img.decoding = "async";
+            img.style.zIndex = layer === "World_Imagery" ? 0 : 1;
+            img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/${layer}/MapServer/tile/${z}/${ty}/${((tx % n) + n) % n}`;
+            this._ltTiles.set(k, img);
+            box.appendChild(img);
+          }
+          const left = Math.round(tx * T - cx + W / 2), top = Math.round(ty * T - cy + H / 2);
+          img.style.transform = `translate(${left}px, ${top}px)`;
+          img.style.width = `${Math.round((tx + 1) * T - cx + W / 2) - left + 1}px`; // +1: no hairline seams between tiles
+          img.style.height = `${Math.round((ty + 1) * T - cy + H / 2) - top + 1}px`;
+        }
+    for (const [k, img] of this._ltTiles) if (!keep.has(k)) (img.remove(), this._ltTiles.delete(k));
+    for (const b of el.querySelectorAll(".zoom button")) b.classList.toggle("on", Number(b.dataset.km) === this._ltKm);
+    // Overlay: rings (true distances), N, the strikes (oldest first, so the newest are on top), home.
+    const C = [W / 2, H / 2];
+    let s = `<defs><filter id="lth"><feDropShadow dx="0" dy="0" stdDeviation="1.2" flood-color="#000" flood-opacity=".9"/></filter></defs>`;
+    for (const km of [10, 25, 50, 100]) {
+      const r = (km * 1000) / mpp;
+      if (r < 12 || r > Math.hypot(W, H)) continue;
+      s += `<circle cx="${C[0]}" cy="${C[1]}" r="${r.toFixed(1)}" fill="none" stroke="#fff" stroke-opacity=".75" stroke-width="1.3" stroke-dasharray="${km === 100 ? "" : "5 4"}" filter="url(#lth)"/>
+            <text x="${C[0] + 4}" y="${(C[1] - r + 13).toFixed(1)}" filter="url(#lth)" style="font-size:11px;font-weight:600;fill:#fff">${km} km</text>`;
+    }
+    s += `<text x="${C[0]}" y="16" text-anchor="middle" filter="url(#lth)" style="font-size:13px;font-weight:700;fill:#ff5252">N</text>`;
+    for (const [age, , , la, lo] of [...(Lt.strikes || [])].sort((a, b) => b[0] - a[0])) {
+      if (!fin(la) || !fin(lo)) continue;
+      const [x, y] = P(la, lo);
+      if (x < -10 || y < -10 || x > W + 10 || y > H + 10) continue;
+      const col = age < 300 ? "#ffee58" : age < 900 ? "#ffa726" : "#ff5252";
+      s += age < 300
+        ? `<path d="M${x - 2},${y - 7} L${x + 3},${y - 1} L${x},${y - 1} L${x + 2},${y + 7} L${x - 3},${y} L${x},${y} Z" fill="${col}" stroke="#000" stroke-width=".8"/>`
+        : `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${col}" stroke="#000" stroke-width=".7" opacity="${age < 900 ? 1 : 0.75}"/>`;
+    }
+    s += `<circle cx="${C[0]}" cy="${C[1]}" r="6" fill="var(--primary-color)" stroke="#fff" stroke-width="2"/>`;
+    el.querySelector("svg.ov").innerHTML = s;
   }
 
   // A compass rose with an arrow pointing the way the wind is blowing (it comes from `dir`).

@@ -443,7 +443,7 @@ class Station {
     const known = this.strikes.has(eid);
     this.strikes.set(eid, { t, lat: a.latitude, lon: a.longitude, km });
     if (!known) {
-      this.strikeLog.push([t, Math.round(km * 10) / 10, brg === null ? null : Math.round(brg)]);
+      this.strikeLog.push([t, Math.round(km * 10) / 10, brg === null ? null : Math.round(brg), Math.round(a.latitude * 1e4) / 1e4, Math.round(a.longitude * 1e4) / 1e4]);
       this.strikeLog.sort((x, y) => x[0] - y[0]);
       while (this.strikeLog.length && Date.now() - this.strikeLog[0][0] > 3 * 3600e3) this.strikeLog.shift();
       if (live) checkLightning(this, km, brg);
@@ -459,8 +459,9 @@ class Station {
     const last = this.strikeLog[this.strikeLog.length - 1] || null;
     const fmt = (x) => (x ? { t: x[0], km: x[1], bearing: x[2] } : null);
     return {
+      home: this.home, // the map's centre
       count15: in15.length, count60: recent.length, nearest15: fmt(near(in15)), nearest60: fmt(near(recent)), last: fmt(last),
-      strikes: recent.slice(-400).map((x) => [Math.round((now - x[0]) / 1000), x[1], x[2]]),
+      strikes: recent.slice(-400).map((x) => [Math.round((now - x[0]) / 1000), x[1], x[2], x[3], x[4]]), // [age s, km, bearing, lat, lon]
     };
   }
 

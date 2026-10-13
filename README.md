@@ -18,8 +18,8 @@ own Home Assistant, switched with a button.
   rising, falling fast...); solar radiation, UV index on the WHO scale, light; inside temperature, humidity and dew
   point; sensor batteries.
 - **Lightning** (if that Home Assistant has the [Blitzortung](https://github.com/mrk-its/homeassistant-blitzortung)
-  integration, from HACS): the last hour's strikes plotted around the station (rings at 10, 25, 50 and 100 km, newest
-  brightest), strikes in the last 15 minutes and hour, the nearest and the latest, a strike-count graph, and a
+  integration, from HACS): the last hour's strikes on a satellite map centred on that HA's home location (Esri World
+  Imagery with place names; range rings at 10, 25, 50 and 100 km; zoom to 25, 50 or 100 km; newest brightest), strikes in the last 15 minutes and hour, the nearest and the latest, a strike-count graph, and a
   "lightning within X km" alert.
 - **Graphs**: temperature (outside with its min-max band, inside), humidity, wind (average and gusts), rain (bars:
   30 min, hourly, 6-hourly, daily or weekly to suit) and pressure, over **6 h, 24 h, 7 d, 30 d or a year**. Touch or
