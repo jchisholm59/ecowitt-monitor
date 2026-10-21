@@ -14,17 +14,23 @@ try {
 } catch (e) {}
 
 const env = (k, d = '') => (process.env[k] ?? '').trim() || d;
+// Addresses typed without a scheme ("192.168.1.20", "host.local:8080") get http:// (https:// for ntfy, whose
+// public server needs it), so they work either way.
+const envUrl = (k, d = '', scheme = 'http') => {
+  const v = env(k, d);
+  return v && !/^[a-z][a-z\d+.-]*:\/\//i.test(v) ? `${scheme}://${v}` : v;
+};
 const num = (k, d) => (env(k) !== '' && Number.isFinite(Number(env(k))) ? Number(env(k)) : d);
 const PORT = num('PORT', 7120);
-const HA_URL = env('HA_URL', 'http://homeassistant.local:8123').replace(/\/+$/, '');
+const HA_URL = envUrl('HA_URL', 'http://homeassistant.local:8123').replace(/\/+$/, '');
 const HA_TOKEN = env('HA_TOKEN');
 const STATION = env('STATION'); // optional: which station, when HA has more than one (the start of its sensors' unique IDs)
-const HA_WEBHOOK = env('HA_WEBHOOK');
+const HA_WEBHOOK = envUrl('HA_WEBHOOK');
 // ntfy (https://ntfy.sh, or your own server): phone alerts without Home Assistant's companion app. NTFY_URL is the
 // topic URL; NTFY_TOKEN only for a protected server or topic.
-const NTFY_URL = env('NTFY_URL');
+const NTFY_URL = envUrl('NTFY_URL', '', 'https');
 const NTFY_TOKEN = env('NTFY_TOKEN');
-const DASHBOARD_URL = env('DASHBOARD_URL'); // where tapping an ntfy alert goes
+const DASHBOARD_URL = envUrl('DASHBOARD_URL'); // where tapping an ntfy alert goes
 const AUTH = require('./auth')(env('ADMIN_PASSWORD'), 'ecowitt-monitor', env('ADMIN_TRUSTED_IPS'));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -104,7 +110,7 @@ function bearingDeg(la1, lo1, la2, lo2) {
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'station';
 const STATION_CONFIG = [];
 for (let i = 1; i <= 9; i++) {
-  const url = env(`STATION_${i}_HA_URL`), token = env(`STATION_${i}_HA_TOKEN`);
+  const url = envUrl(`STATION_${i}_HA_URL`).replace(/\/+$/, ''), token = env(`STATION_${i}_HA_TOKEN`);
   if (url || token) STATION_CONFIG.push({ name: env(`STATION_${i}_NAME`, `Station ${i}`), url, token, match: env(`STATION_${i}_ID`) });
 }
 if (!STATION_CONFIG.length) STATION_CONFIG.push({ name: env('STATION_NAME', ''), url: HA_URL, token: HA_TOKEN, match: STATION });

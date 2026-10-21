@@ -59,8 +59,10 @@ git clone https://github.com/jchisholm59/ecowitt-monitor.git
 cd ecowitt-monitor && ./install.sh
 ```
 It checks Node.js 22+, installs pm2 if needed, asks for HA's address, a token (HA: your profile → Security →
-Long-lived access tokens), alerts, and starts the monitor under pm2. For several stations, see `STATION_1_...` in
-[`.env.example`](.env.example).
+Long-lived access tokens), alerts, and starts the monitor under pm2.
+Run it as yourself, not with `sudo`: it asks for your password only if installing pm2 needs it (a distribution's
+Node.js keeps global npm packages in a root-owned folder). Addresses can be typed with or without `http://`.
+For several stations, see `STATION_1_...` in [`.env.example`](.env.example).
 
 **Updating**: `cd ecowitt-monitor && git pull && ./install.sh --yes` (keeps `.env` and `data/`).
 
