@@ -39,6 +39,9 @@ own Home Assistant, switched with a button.
   and/or [ntfy](https://ntfy.sh).
 - **Home Assistant add-on**: on HA OS, add [`jchisholm59/ha-addons`](https://github.com/jchisholm59/ha-addons) to the
   Add-on Store and install **Ecowitt Monitor**: a **Weather** panel in the sidebar, no token needed for HA's own station.
+
+  [![Add the repository to my Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fjchisholm59%2Fha-addons)
+
 - **Standalone**: the same card at `http://<this machine>:7120/`, no Home Assistant dashboard needed (it still reads
   the station through HA). `?station=cottage&tab=graphs&range=7d` opens it there.
 
